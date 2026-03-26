@@ -70,7 +70,7 @@ class DuckDBQuerySchema(BaseModel):
 class A2AAnalysisSchema(BaseModel):
     """Schema for A2A analysis tool arguments"""
     analysis_request: str = Field(..., description="Analysis request to send to AI models")
-    model_preference: str = Field("mistral", description="Preferred AI model (mistral, tinyllama, or both)")
+    model_preference: Optional[str] = Field("mistral", description="Preferred AI model (mistral, tinyllama, or both)")
 
 class FilesystemWriteSchema(BaseModel):
     """Schema for filesystem write tool arguments"""
@@ -170,7 +170,7 @@ class SMCPA2ATool(BaseTool):
         super().__init__()
         self._a2a_agent = a2a_agent
     
-    def _run(self, analysis_request: str, model_preference: str = "mistral") -> str:
+    def _run(self, analysis_request: str = "", model_preference: str = "mistral", **kwargs) -> str:
         """Execute A2A analysis synchronously"""
         try:
             # Try to use existing event loop if available
@@ -201,6 +201,13 @@ class SMCPA2ATool(BaseTool):
     async def _execute_a2a_analysis(self, analysis_request: str, model_preference: str) -> str:
         """Execute A2A analysis and return results"""
         try:
+            # Validate inputs
+            if not analysis_request:
+                return json.dumps({
+                    "status": "error",
+                    "error": "No analysis request provided"
+                })
+            
             # Create A2A workflow based on model preference
             if model_preference == "mistral":
                 workflow_steps = [{"capability": "mistral", "task_type": "business_analysis"}]
@@ -680,8 +687,9 @@ class CrewAISMCPOrchestrator:
             description=f"""
             Extract and analyze {business_domain} business data.
             
-            Use the tool 'smcp_duckdb_query' with this SQL query:
-            {data_query}
+            Use the tool smcp_duckdb_query to execute this exact SQL query:
+            
+            sql_query: """{data_query}"""
             
             After getting the query results, analyze:
             1. Key performance indicators and trends
@@ -701,10 +709,10 @@ class CrewAISMCPOrchestrator:
             description=f"""
             Using the data analysis results, perform advanced business intelligence analysis.
             
-            Use the tool 'smcp_a2a_analysis' with this analysis request:
-            "Analyze the {business_domain} performance data and provide strategic recommendations for {focus_area}. Focus on growth opportunities, risk mitigation, and operational improvements."
+            Use the tool smcp_a2a_analysis with these exact parameters:
             
-            Set model_preference to "mistral" for sophisticated business analysis.
+            analysis_request: "Analyze the {business_domain} performance data and provide strategic recommendations for {focus_area}. Focus on growth opportunities, risk mitigation, and operational improvements."
+            model_preference: "mistral"
             
             Provide:
             1. Strategic interpretation of the data patterns
