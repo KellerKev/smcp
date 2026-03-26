@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Ollama Poem Generation Sample - Secure A2A Communication
-Demonstrates TinyLLama -> Mistral secure agent-to-agent communication for poem generation
+Demonstrates Qwen 2.5 Coder 7B -> Qwen3 Coder secure agent-to-agent communication for poem generation
 with local MCP storage via encrypted channels
 """
 
@@ -39,28 +39,28 @@ class PoemGenerationAgent(SMCPAgent):
         """Register poem generation and storage capabilities"""
         from smcp_core import Capability
         
-        # TinyLLama poem generation
-        tinyllama_cap = Capability(
-            name="tinyllama_poem",
-            description="Generate poem using TinyLLama local Ollama",
+        # Qwen 2.5 Coder 7B poem generation
+        qwen2.5-coder_cap = Capability(
+            name="qwen2.5-coder_poem",
+            description="Generate poem using Qwen 2.5 Coder 7B local Ollama",
             parameters={
                 "theme": {"type": "string", "description": "Poem theme or subject"},
                 "style": {"type": "string", "default": "free_verse", "description": "Poetry style"},
                 "length": {"type": "string", "default": "medium", "description": "Poem length"}
             }
         )
-        self.register_capability(tinyllama_cap, self._generate_tinyllama_poem)
+        self.register_capability(qwen2.5-coder_cap, self._generate_qwen2.5-coder_poem)
         
-        # Mistral poem enhancement
-        mistral_cap = Capability(
-            name="mistral_enhance",
-            description="Enhance poem using Mistral model",
+        # Qwen3 Coder poem enhancement
+        qwen3-coder_cap = Capability(
+            name="qwen3-coder_enhance",
+            description="Enhance poem using Qwen3 Coder model",
             parameters={
                 "poem": {"type": "string", "description": "Original poem to enhance"},
                 "enhancement_type": {"type": "string", "default": "refine", "description": "Type of enhancement"}
             }
         )
-        self.register_capability(mistral_cap, self._enhance_with_mistral)
+        self.register_capability(qwen3-coder_cap, self._enhance_with_qwen3-coder)
         
         # Secure local storage
         storage_cap = Capability(
@@ -84,8 +84,8 @@ class PoemGenerationAgent(SMCPAgent):
         )
         self.register_capability(collab_cap, self._collaborative_poem_generation)
     
-    def _generate_tinyllama_poem(self, theme: str, style: str = "free_verse", length: str = "medium") -> Dict[str, Any]:
-        """Generate initial poem using TinyLLama via secure channel"""
+    def _generate_qwen2.5-coder_poem(self, theme: str, style: str = "free_verse", length: str = "medium") -> Dict[str, Any]:
+        """Generate initial poem using Qwen 2.5 Coder 7B via secure channel"""
         try:
             # Construct secure prompt
             prompt_templates = {
@@ -101,7 +101,7 @@ class PoemGenerationAgent(SMCPAgent):
             response = requests.post(
                 f'{self.config.ai.ollama_url}/api/generate',
                 json={
-                    "model": "tinyllama:latest",
+                    "model": "qwen2.5-coder:7b-instruct-q4_K_M",
                     "prompt": prompt,
                     "stream": False,
                     "options": {
@@ -122,36 +122,36 @@ class PoemGenerationAgent(SMCPAgent):
                     "theme": theme,
                     "style": style,
                     "length": length,
-                    "model": "tinyllama:latest",
+                    "model": "qwen2.5-coder:7b-instruct-q4_K_M",
                     "agent": self.agent_info.name,
                     "timestamp": datetime.now().isoformat(),
                     "security_level": "encrypted_local"
                 }
                 
-                self.logger.info(f"Generated TinyLLama poem: {poem_data['id']}")
+                self.logger.info(f"Generated Qwen 2.5 Coder 7B poem: {poem_data['id']}")
                 
                 return {
                     "status": "success",
                     "poem_data": poem_data,
                     "word_count": len(ai_response.split()),
-                    "generation_method": "tinyllama_secure"
+                    "generation_method": "qwen2.5-coder_secure"
                 }
             else:
                 return {
                     "status": "error",
-                    "error": f"TinyLLama service error: {response.status_code}",
-                    "model": "tinyllama:latest"
+                    "error": f"Qwen 2.5 Coder 7B service error: {response.status_code}",
+                    "model": "qwen2.5-coder:7b-instruct-q4_K_M"
                 }
                 
         except Exception as e:
             return {
                 "status": "error",
-                "error": f"Failed to generate TinyLLama poem: {str(e)}",
-                "note": "Ensure Ollama is running with TinyLLama model"
+                "error": f"Failed to generate Qwen 2.5 Coder 7B poem: {str(e)}",
+                "note": "Ensure Ollama is running with Qwen 2.5 Coder 7B model"
             }
     
-    def _enhance_with_mistral(self, poem: str, enhancement_type: str = "refine") -> Dict[str, Any]:
-        """Enhance poem using Mistral model via secure A2A"""
+    def _enhance_with_qwen3-coder(self, poem: str, enhancement_type: str = "refine") -> Dict[str, Any]:
+        """Enhance poem using Qwen3 Coder model via secure A2A"""
         try:
             enhancement_prompts = {
                 "refine": f"Refine and improve this poem while maintaining its essence:\n\n{poem}\n\nImproved version:",
@@ -162,11 +162,11 @@ class PoemGenerationAgent(SMCPAgent):
             
             prompt = enhancement_prompts.get(enhancement_type, enhancement_prompts["refine"])
             
-            # Secure request to Mistral via Ollama
+            # Secure request to Qwen3 Coder via Ollama
             response = requests.post(
                 f'{self.config.ai.ollama_url}/api/generate',
                 json={
-                    "model": "mistral:7b-instruct-q4_K_M",
+                    "model": "qwen3-coder:30b-a3b-q4_K_M",
                     "prompt": prompt,
                     "stream": False,
                     "options": {
@@ -185,36 +185,36 @@ class PoemGenerationAgent(SMCPAgent):
                     "original_poem": poem,
                     "enhanced_content": enhanced_poem,
                     "enhancement_type": enhancement_type,
-                    "model": "mistral:7b-instruct-q4_K_M",
+                    "model": "qwen3-coder:30b-a3b-q4_K_M",
                     "agent": self.agent_info.name,
                     "timestamp": datetime.now().isoformat(),
                     "security_level": "encrypted_a2a"
                 }
                 
-                self.logger.info(f"Enhanced poem with Mistral: {enhancement_data['id']}")
+                self.logger.info(f"Enhanced poem with Qwen3 Coder: {enhancement_data['id']}")
                 
                 return {
                     "status": "success",
                     "enhancement_data": enhancement_data,
                     "improvement_score": 0.85,  # Simulated quality metric
-                    "model_used": "mistral:latest"
+                    "model_used": "qwen3-coder:latest"
                 }
             else:
-                print(f"   ❌ Mistral enhancement failed: HTTP {response.status_code}")
-                print("   💡 Make sure Mistral model is installed: ollama pull mistral:latest")
+                print(f"   ❌ Qwen3 Coder enhancement failed: HTTP {response.status_code}")
+                print("   💡 Make sure Qwen3 Coder model is installed: ollama pull qwen3-coder:latest")
                 return {
                     "status": "error", 
-                    "error": f"Mistral service error: {response.status_code}",
+                    "error": f"Qwen3 Coder service error: {response.status_code}",
                     "original": poem  # Keep original on enhancement failure
                 }
                 
         except Exception as e:
-            print(f"   ❌ Mistral enhancement error: {e}")
+            print(f"   ❌ Qwen3 Coder enhancement error: {e}")
             print("   💡 Make sure Ollama is running: ollama serve")
-            print("   💡 Make sure Mistral model is installed: ollama pull mistral:latest")
+            print("   💡 Make sure Qwen3 Coder model is installed: ollama pull qwen3-coder:latest")
             return {
                 "status": "error",
-                "error": f"Failed to enhance with Mistral: {str(e)}",
+                "error": f"Failed to enhance with Qwen3 Coder: {str(e)}",
                 "original": poem
             }
     
@@ -276,35 +276,35 @@ class PoemGenerationAgent(SMCPAgent):
             collaboration_id = str(uuid.uuid4())
             
             if collaboration_type == "sequential":
-                # Sequential: TinyLLama -> Mistral pipeline
+                # Sequential: Qwen 2.5 Coder 7B -> Qwen3 Coder pipeline
                 self.logger.info(f"Starting sequential poem collaboration: {collaboration_id}")
                 
-                # Step 1: Generate initial poem with TinyLLama
-                tinyllama_result = self._generate_tinyllama_poem(
+                # Step 1: Generate initial poem with Qwen 2.5 Coder 7B
+                qwen2.5-coder_result = self._generate_qwen2.5-coder_poem(
                     theme=theme,
                     style="free_verse",
                     length="medium"
                 )
                 
-                if tinyllama_result["status"] != "success":
-                    return tinyllama_result
+                if qwen2.5-coder_result["status"] != "success":
+                    return qwen2.5-coder_result
                 
-                # Step 2: Enhance with Mistral
-                mistral_result = self._enhance_with_mistral(
-                    poem=tinyllama_result["poem_data"]["content"],
+                # Step 2: Enhance with Qwen3 Coder
+                qwen3-coder_result = self._enhance_with_qwen3-coder(
+                    poem=qwen2.5-coder_result["poem_data"]["content"],
                     enhancement_type="refine"
                 )
                 
-                if mistral_result["status"] != "success":
-                    # Use TinyLLama result if Mistral fails
-                    final_poem = tinyllama_result["poem_data"]
+                if qwen3-coder_result["status"] != "success":
+                    # Use Qwen 2.5 Coder 7B result if Qwen3 Coder fails
+                    final_poem = qwen2.5-coder_result["poem_data"]
                     enhancement_status = "failed_fallback_to_original"
                 else:
                     # Combine results
                     final_poem = {
-                        **tinyllama_result["poem_data"],
-                        "content": mistral_result["enhancement_data"]["enhanced_content"],
-                        "collaborative_process": "tinyllama_to_mistral",
+                        **qwen2.5-coder_result["poem_data"],
+                        "content": qwen3-coder_result["enhancement_data"]["enhanced_content"],
+                        "collaborative_process": "qwen2.5-coder_to_qwen3-coder",
                         "enhancement_applied": True
                     }
                     enhancement_status = "success"
@@ -315,7 +315,7 @@ class PoemGenerationAgent(SMCPAgent):
                     metadata={
                         "collaboration_id": collaboration_id,
                         "collaboration_type": collaboration_type,
-                        "agents_involved": ["tinyllama", "mistral"],
+                        "agents_involved": ["qwen2.5-coder", "qwen3-coder"],
                         "enhancement_status": enhancement_status
                     }
                 )
@@ -326,7 +326,7 @@ class PoemGenerationAgent(SMCPAgent):
                     "collaboration_type": collaboration_type,
                     "final_poem": final_poem,
                     "storage_result": storage_result,
-                    "agents_used": ["tinyllama:latest", "mistral:7b-instruct-q4_K_M"],
+                    "agents_used": ["qwen2.5-coder:7b-instruct-q4_K_M", "qwen3-coder:30b-a3b-q4_K_M"],
                     "security_flow": "encrypted_a2a_to_mcp_local"
                 }
             
@@ -348,28 +348,28 @@ def create_poem_agents(config: SMCPConfig) -> Dict[str, PoemGenerationAgent]:
     """Create specialized poem generation agents"""
     registry = AgentRegistry()
     
-    # TinyLLama Agent (Initial Generation)
-    tinyllama_agent = PoemGenerationAgent(
+    # Qwen 2.5 Coder 7B Agent (Initial Generation)
+    qwen2.5-coder_agent = PoemGenerationAgent(
         config,
         AgentInfo(
-            agent_id="tinyllama_poet",
-            name="TinyLLama Poet",
-            description="Initial poem generation using TinyLLama model",
+            agent_id="qwen2.5-coder_poet",
+            name="Qwen 2.5 Coder 7B Poet",
+            description="Initial poem generation using Qwen 2.5 Coder 7B model",
             specialties=["poem_generation", "creative_writing", "initial_draft"],
-            capabilities=["tinyllama_poem", "creative_ideation"]
+            capabilities=["qwen2.5-coder_poem", "creative_ideation"]
         ),
         registry
     )
     
-    # Mistral Agent (Enhancement and Refinement)  
-    mistral_agent = PoemGenerationAgent(
+    # Qwen3 Coder Agent (Enhancement and Refinement)  
+    qwen3-coder_agent = PoemGenerationAgent(
         config,
         AgentInfo(
-            agent_id="mistral_enhancer", 
-            name="Mistral Enhancer",
-            description="Poem enhancement and refinement using Mistral model",
+            agent_id="qwen3-coder_enhancer", 
+            name="Qwen3 Coder Enhancer",
+            description="Poem enhancement and refinement using Qwen3 Coder model",
             specialties=["poem_enhancement", "literary_refinement", "style_improvement"],
-            capabilities=["mistral_enhance", "literary_analysis"]
+            capabilities=["qwen3-coder_enhance", "literary_analysis"]
         ),
         registry
     )
@@ -388,8 +388,8 @@ def create_poem_agents(config: SMCPConfig) -> Dict[str, PoemGenerationAgent]:
     )
     
     return {
-        "tinyllama": tinyllama_agent,
-        "mistral": mistral_agent,
+        "qwen2.5-coder": qwen2.5-coder_agent,
+        "qwen3-coder": qwen3-coder_agent,
         "mcp_storage": mcp_agent
     }
 
@@ -398,7 +398,7 @@ async def demo_poem_generation():
     """Demonstrate secure A2A poem generation with local MCP storage"""
     print("🎭 Secure A2A Poem Generation Demo")
     print("=" * 60)
-    print("Architecture: TinyLLama -> Mistral -> MCP Local Storage")
+    print("Architecture: Qwen 2.5 Coder 7B -> Qwen3 Coder -> MCP Local Storage")
     print("Security: Encrypted A2A + Local MCP Channels")
     print("=" * 60)
     
@@ -415,11 +415,11 @@ async def demo_poem_generation():
         models = [m["name"] for m in response.json().get("models", [])]
         print(f"✓ Ollama available with models: {models}")
         
-        required_models = ["tinyllama:latest", "mistral:7b-instruct-q4_K_M"]
+        required_models = ["qwen2.5-coder:7b-instruct-q4_K_M", "qwen3-coder:30b-a3b-q4_K_M"]
         missing_models = [m for m in required_models if m not in models]
         if missing_models:
             print(f"⚠️  Missing models: {missing_models}")
-            print("   Run: ollama pull tinyllama && ollama pull mistral")
+            print("   Run: ollama pull qwen2.5-coder && ollama pull qwen3-coder")
             return
             
     except Exception as e:
@@ -428,7 +428,7 @@ async def demo_poem_generation():
     
     # Create specialized agents
     agents = create_poem_agents(config)
-    coordinator = agents["tinyllama"]  # Use TinyLLama as coordinator
+    coordinator = agents["qwen2.5-coder"]  # Use Qwen 2.5 Coder 7B as coordinator
     
     # Demo themes
     themes = [
@@ -495,8 +495,8 @@ async def demo_poem_generation():
         print("• Secure file permissions (600)")
         
         print(f"\n🤖 AI Models Collaboration:")
-        print("• TinyLLama: Initial creative generation")
-        print("• Mistral: Literary enhancement and refinement")
+        print("• Qwen 2.5 Coder 7B: Initial creative generation")
+        print("• Qwen3 Coder: Literary enhancement and refinement")
         print("• MCP: Secure encrypted local persistence")
 
 

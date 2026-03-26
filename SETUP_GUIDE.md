@@ -25,13 +25,13 @@ curl -fsSL https://ollama.ai/install.sh | sh
 # Start Ollama service
 ollama serve &
 
-# Pull required models (minimum required)
-ollama pull tinyllama:latest
-ollama pull mistral:7b-instruct-q4_K_M
+# Pull required models (recommended Qwen models)
+ollama pull qwen2.5-coder:7b-instruct-q4_K_M    # Fast, efficient coding model
+ollama pull qwen3-coder:30b-a3b-q4_K_M          # Powerful analysis model
 
-# Optional: Pull more powerful models for better results
-ollama pull qwen3:14b-q4_K_M
-ollama pull qwen3:30b-instruct
+# Optional: Legacy models for compatibility
+ollama pull tinyllama:latest                     # Lightweight fallback
+ollama pull mistral:7b-instruct-q4_K_M          # Alternative reasoning model
 ```
 
 ### 4. Setup DuckDB with Sample Data
@@ -99,7 +99,7 @@ try:
     response = requests.get("http://localhost:11434/api/tags", timeout=5)
     models = response.json().get("models", [])
     print(f"✅ Ollama: Running with {len(models)} models")
-    required = ["tinyllama:latest", "mistral:7b-instruct-q4_K_M"]
+    required = ["qwen2.5-coder:7b-instruct-q4_K_M", "qwen3-coder:30b-a3b-q4_K_M"]
     for model in required:
         if any(m['name'] == model for m in models):
             print(f"   ✓ {model} installed")

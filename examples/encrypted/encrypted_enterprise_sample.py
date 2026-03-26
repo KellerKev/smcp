@@ -324,12 +324,12 @@ async def demo_encrypted_enterprise_features():
     
     # Demo 2: Encrypted Enterprise Multi-Model AI Coordination
     print("\n2. Encrypted Enterprise Multi-Model AI Coordination")
-    print("   Executing: Encrypted TinyLLama → Mistral → Storage with zero-trust security")
+    print("   Executing: Encrypted Qwen 2.5 Coder 7B → Qwen3 Coder → Storage with zero-trust security")
     
     # Encrypted enterprise AI workflow with maximum security
     encrypted_enterprise_workflow_steps = [
-        {"capability": "tinyllama", "task_type": "secure_initial_draft", "encryption_level": "maximum"},
-        {"capability": "mistral", "task_type": "secure_executive_review", "encryption_level": "maximum"}, 
+        {"capability": "qwen2.5-coder", "task_type": "secure_initial_draft", "encryption_level": "maximum"},
+        {"capability": "qwen3-coder", "task_type": "secure_executive_review", "encryption_level": "maximum"}, 
         {"capability": "mcp_storage", "task_type": "encrypted_enterprise_archive", "encryption_level": "maximum"}
     ]
     
@@ -601,7 +601,7 @@ Ready for high-security enterprise production deployment.
     print("📊 Encrypted Mode Enterprise Features Summary")
     print("=" * 90)
     print("✅ Zero-Trust Validation: Encrypted multi-stage validation with maximum security")
-    print("✅ Encrypted Multi-Model Coordination: TinyLLama → Mistral → Storage (all encrypted)")
+    print("✅ Encrypted Multi-Model Coordination: Qwen 2.5 Coder 7B → Qwen3 Coder → Storage (all encrypted)")
     print("✅ Maximum Security SLA: Performance monitoring with encryption overhead tracking")
     print("✅ Encrypted Authentication: JWT tokens encrypted inside AES-256-GCM payload")
     print("✅ Perfect Forward Secrecy: Ephemeral ECDH keys with automatic rotation")

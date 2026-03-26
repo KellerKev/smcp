@@ -21,7 +21,7 @@ CSV Data → DuckDB → SMCP Connector → A2A Network → Ollama AI → Busines
 Prerequisites:
 - DuckDB: pip install duckdb
 - Sample data (auto-generated)
-- Ollama with TinyLLama and Mistral models
+- Ollama with Qwen 2.5 Coder 7B and Qwen3 Coder models
 """
 
 import asyncio
@@ -166,13 +166,13 @@ class SMCPDuckDBAnalyticsAgent(DistributedA2AAgent):
             return {"error": f"Failed to get database summary: {e}"}
     
     async def execute_analytics_workflow(self, analysis_question: str, domain: str = "ecommerce") -> Dict[str, Any]:
-        """Execute AI-Driven Analytics Workflow: Mistral 7B → SQL Generation → DuckDB Query → Analysis"""
+        """Execute AI-Driven Analytics Workflow: Qwen3 Coder 30B → SQL Generation → DuckDB Query → Analysis"""
         
         workflow_id = str(uuid.uuid4())
         print(f"\n📈 Starting AI-Driven Analytics Workflow: {workflow_id[:8]}")
         print(f"   Domain: {domain}")
         print(f"   Question: {analysis_question}")
-        print(f"   🤖 Architecture: Mistral 7B → SQL Generation → DuckDB via SMCP Connector")
+        print(f"   🤖 Architecture: Qwen3 Coder 30B → SQL Generation → DuckDB via SMCP Connector")
         
         results = {}
         
@@ -203,8 +203,8 @@ class SMCPDuckDBAnalyticsAgent(DistributedA2AAgent):
         print(f"   ✅ Schema retrieved: {len(schema['tables'])} tables")
         print(f"   📊 Available data: {sum(t.get('row_count', 0) for t in schema['tables']):,} total rows")
         
-        # Step 2: Have Mistral 7B generate SQL query
-        print(f"\n🔥 Step 2: Mistral 7B SQL Query Generation")
+        # Step 2: Have Qwen3 Coder 30B generate SQL query
+        print(f"\n🔥 Step 2: Qwen3 Coder 30B SQL Query Generation")
         
         # Create domain-specific table filtering
         domain_tables = [t for t in schema.get("tables", []) if domain in t["name"]]
@@ -229,8 +229,8 @@ class SMCPDuckDBAnalyticsAgent(DistributedA2AAgent):
         
         domain_schema_text = "\n\n".join(domain_schema)
         
-        # Create domain-specific prompt with extra guidance for Mistral 7B
-        # NOTE: Smaller models like Mistral 7B need explicit SQL templates and patterns
+        # Create domain-specific prompt with extra guidance for Qwen3 Coder 30B
+        # NOTE: Smaller models like Qwen3 Coder 30B need explicit SQL templates and patterns
         # Larger models (GPT-4, Claude-3.5) would not need this level of hand-holding
         if domain == "saas":
             # SaaS domain needs extra guidance due to complex relationships and alias consistency issues
@@ -311,27 +311,27 @@ IMPORTANT: Pick ONE consistent style and JOIN every table you reference.
 
 Generate the SQL query now:"""
         
-        print(f"   🤖 Asking Mistral 7B to generate SQL query...")
+        print(f"   🤖 Asking Qwen3 Coder 30B to generate SQL query...")
         
-        mistral_sql_task = {
+        qwen3-coder_sql_task = {
             "prompt": sql_generation_prompt,
-            "model": "mistral:7b-instruct-q4_K_M",
+            "model": "qwen3-coder:30b-a3b-q4_K_M",
             "max_tokens": 500,
             "temperature": 0.1  # Low temperature for precise SQL generation
         }
         
         # Direct Ollama call for SQL generation (bypass A2A routing for demo)
         sql_generation_result = await self._call_ollama_directly(
-            model="mistral:7b-instruct-q4_K_M",
+            model="qwen3-coder:30b-a3b-q4_K_M",
             prompt=sql_generation_prompt,
             max_tokens=500,
             temperature=0.1
         )
         
         if sql_generation_result["status"] != "completed":
-            print(f"   ❌ Mistral SQL generation failed: {sql_generation_result.get('error')}")
-            print("   💡 Make sure Mistral is installed: ollama pull mistral:7b-instruct-q4_K_M")
-            raise Exception("SQL generation failed - Mistral 7B required for this workflow")
+            print(f"   ❌ Qwen3 Coder SQL generation failed: {sql_generation_result.get('error')}")
+            print("   💡 Make sure Qwen3 Coder is installed: ollama pull qwen3-coder:30b-a3b-q4_K_M")
+            raise Exception("SQL generation failed - Qwen3 Coder 30B required for this workflow")
         
         generated_sql = sql_generation_result.get("final_data", {}).get("content", "").strip()
         
@@ -341,17 +341,17 @@ Generate the SQL query now:"""
         elif "```" in generated_sql:
             generated_sql = generated_sql.split("```")[1].split("```")[0].strip()
         
-        print(f"   ✅ Mistral 7B generated SQL query")
+        print(f"   ✅ Qwen3 Coder 30B generated SQL query")
         print(f"   🔍 Generated SQL Query:")
         print(f"   {generated_sql}")
         
         results["sql_generation"] = {
             "status": "success",
             "generated_sql": generated_sql,
-            "model": "mistral:7b-instruct-q4_K_M"
+            "model": "qwen3-coder:30b-a3b-q4_K_M"
         }
         
-        # Step 3: Execute Mistral-generated SQL against DuckDB via SMCP Connector
+        # Step 3: Execute Qwen3 Coder-generated SQL against DuckDB via SMCP Connector
         print(f"\n🦆 Step 3: Execute AI-Generated Query via SMCP DuckDB Connector")
         
         query_request = QueryRequest(
@@ -360,14 +360,14 @@ Generate the SQL query now:"""
             query=generated_sql
         )
         
-        print(f"   🔍 Executing Mistral-generated SQL against DuckDB...")
+        print(f"   🔍 Executing Qwen3 Coder-generated SQL against DuckDB...")
         
         query_result = await self.duckdb_connector.execute_query(query_request)
         
         if query_result.status == "success":
             print(f"   ✅ AI-generated query executed successfully!")
             print(f"   📊 Results: {query_result.row_count:,} rows in {query_result.execution_time:.3f}s")
-            print(f"   🔍 ACTUAL DATA FROM DUCKDB (via Mistral SQL):")
+            print(f"   🔍 ACTUAL DATA FROM DUCKDB (via Qwen3 Coder SQL):")
             
             # Show sample of actual data retrieved by AI query
             if query_result.data:
@@ -401,12 +401,12 @@ Generate the SQL query now:"""
                 "question": analysis_question,
                 "results": results,
                 "error": "AI-generated SQL query failed execution",
-                "architecture": "mistral_7b_sql_generation_duckdb_smcp_connector",
+                "architecture": "qwen3-coder_7b_sql_generation_duckdb_smcp_connector",
                 "timestamp": datetime.now().isoformat()
             }
         
-        # Step 4: Have Mistral 7B analyze the results it retrieved
-        print(f"\n🧠 Step 4: Mistral 7B Business Intelligence Analysis")
+        # Step 4: Have Qwen3 Coder 30B analyze the results it retrieved
+        print(f"\n🧠 Step 4: Qwen3 Coder 30B Business Intelligence Analysis")
         
         # Convert data to JSON-serializable format
         if query_result.data:
@@ -447,25 +447,25 @@ Generate the SQL query now:"""
         Format as a professional business intelligence report.
         """
         
-        print(f"   🤖 Having Mistral 7B analyze the data it retrieved...")
+        print(f"   🤖 Having Qwen3 Coder 30B analyze the data it retrieved...")
         
-        mistral_analysis_task = {
+        qwen3-coder_analysis_task = {
             "prompt": analysis_prompt,
-            "model": "mistral:7b-instruct-q4_K_M",
+            "model": "qwen3-coder:30b-a3b-q4_K_M",
             "max_tokens": 1000,
             "temperature": 0.7
         }
         
         # Direct Ollama call for business intelligence analysis
         analysis_result = await self._call_ollama_directly(
-            model="mistral:7b-instruct-q4_K_M",
+            model="qwen3-coder:30b-a3b-q4_K_M",
             prompt=analysis_prompt,
             max_tokens=1000,
             temperature=0.7
         )
         
         if analysis_result["status"] == "completed":
-            print("   ✅ Mistral 7B business intelligence analysis completed")
+            print("   ✅ Qwen3 Coder 30B business intelligence analysis completed")
             analysis_content = analysis_result.get("final_data", {}).get("content", "No analysis generated")
             
             # Show preview of analysis
@@ -476,14 +476,14 @@ Generate the SQL query now:"""
             results["business_intelligence"] = {
                 "status": "success",
                 "analysis": analysis_content,
-                "model": "mistral:7b-instruct-q4_K_M"
+                "model": "qwen3-coder:30b-a3b-q4_K_M"
             }
         else:
-            print(f"   ❌ Mistral analysis failed: {analysis_result.get('error')}")
+            print(f"   ❌ Qwen3 Coder analysis failed: {analysis_result.get('error')}")
             results["business_intelligence"] = {
                 "status": "failed",
                 "error": analysis_result.get("error"),
-                "model": "mistral:7b-instruct-q4_K_M"
+                "model": "qwen3-coder:30b-a3b-q4_K_M"
             }
         
         return {
@@ -491,7 +491,7 @@ Generate the SQL query now:"""
             "domain": domain,
             "question": analysis_question,
             "results": results,
-            "architecture": "mistral_7b_sql_generation_duckdb_smcp_connector_analysis",
+            "architecture": "qwen3-coder_7b_sql_generation_duckdb_smcp_connector_analysis",
             "ai_driven": True,
             "timestamp": datetime.now().isoformat()
         }
@@ -632,12 +632,12 @@ async def demo_duckdb_integration():
         if response.status_code == 200:
             models = response.json().get("models", [])
             model_names = [m.get("name", "") for m in models]
-            tinyllama_available = any("tinyllama" in name for name in model_names)
-            mistral_available = any("mistral" in name for name in model_names)
+            qwen2.5-coder_available = any("qwen2.5-coder" in name for name in model_names)
+            qwen3-coder_available = any("qwen3-coder" in name for name in model_names)
             
             print(f"   ✅ Ollama running with {len(models)} models")
-            print(f"   🤖 TinyLLama: {'✅ Available' if tinyllama_available else '❌ Missing'}")
-            print(f"   🔥 Mistral 7B: {'✅ Available' if mistral_available else '❌ Missing'}")
+            print(f"   🤖 Qwen 2.5 Coder 7B: {'✅ Available' if qwen2.5-coder_available else '❌ Missing'}")
+            print(f"   🔥 Qwen3 Coder 30B: {'✅ Available' if qwen3-coder_available else '❌ Missing'}")
         else:
             print("   ⚠️ Ollama status unclear")
     except:
@@ -658,7 +658,7 @@ async def demo_duckdb_integration():
     config.cluster = ClusterConfig(
         enabled=True,
         simulate_distributed=True,
-        simulate_ports=[8766, 8767, 8768]  # TinyLLama, Mistral, Storage
+        simulate_ports=[8766, 8767, 8768]  # Qwen 2.5 Coder 7B, Qwen3 Coder, Storage
     )
     
     # Create cluster registry
@@ -708,7 +708,7 @@ async def demo_duckdb_integration():
         # Show SQL generation results
         sql_gen = ecommerce_result["results"].get("sql_generation")
         if sql_gen and sql_gen.get("status") == "success":
-            print(f"   🔥 Mistral 7B SQL Generation: ✅ Success")
+            print(f"   🔥 Qwen3 Coder 30B SQL Generation: ✅ Success")
             print(f"   📝 Generated SQL Preview:")
             sql_preview = sql_gen["generated_sql"][:150] + "..." if len(sql_gen["generated_sql"]) > 150 else sql_gen["generated_sql"]
             print(f"      {sql_preview}")
@@ -727,10 +727,10 @@ async def demo_duckdb_integration():
         bi_analysis = ecommerce_result["results"].get("business_intelligence")
         if bi_analysis and bi_analysis.get("status") == "success":
             analysis_preview = bi_analysis["analysis"][:400] + "..." if len(bi_analysis["analysis"]) > 400 else bi_analysis["analysis"]
-            print(f"   🧠 Mistral 7B Business Intelligence:")
+            print(f"   🧠 Qwen3 Coder 30B Business Intelligence:")
             print(f"      {analysis_preview}")
         
-        print(f"   🤖 Architecture: Mistral 7B → SQL Generation → DuckDB via SMCP Connector → Analysis")
+        print(f"   🤖 Architecture: Qwen3 Coder 30B → SQL Generation → DuckDB via SMCP Connector → Analysis")
     
     # Demo 2: SaaS Business Analytics
     print("\n" + "="*60)
@@ -783,7 +783,7 @@ async def demo_duckdb_integration():
     print("✅ SMCP AI-Driven DuckDB Integration Demo Complete!")
     print("="*80)
     print("🤖 AI-Driven Database Analytics Successfully Demonstrated:")
-    print("   • Mistral 7B generates SQL queries from business questions")
+    print("   • Qwen3 Coder 30B generates SQL queries from business questions")
     print("   • SMCP DuckDB Connector executes AI-generated SQL")
     print("   • High-performance analytical database connectivity")
     print("   • Bulk data loading from CSV files (35,000+ records)")

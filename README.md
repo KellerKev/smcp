@@ -106,9 +106,9 @@ curl -fsSL https://ollama.ai/install.sh | sh
 # Start Ollama service
 ollama serve &
 
-# Pull required models
-ollama pull tinyllama:latest
-ollama pull mistral:7b-instruct-q4_K_M
+# Pull required models (Qwen models recommended)
+ollama pull qwen2.5-coder:7b-instruct-q4_K_M
+ollama pull qwen3-coder:30b-a3b-q4_K_M
 ```
 
 4. **Initialize DuckDB with Sample Data**:

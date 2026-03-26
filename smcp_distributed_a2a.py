@@ -92,8 +92,8 @@ class DistributedNodeRegistry:
         # Configure nodes based on available models
         node_configs = []
         
-        # Node 1: TinyLLama for fast responses
-        if "tinyllama:latest" in available_models or "tinyllama:1.1b" in available_models:
+        # Node 1: Qwen 2.5 Coder for fast responses
+        if "qwen2.5-coder:7b-instruct-q4_K_M" in available_models or "qwen2.5-coder:7b-instruct-q4_K_M" in available_models or "tinyllama:1.1b" in available_models:
             node_configs.append({
                 "node_id": "gpu_server_1",
                 "host": "localhost",
@@ -101,7 +101,7 @@ class DistributedNodeRegistry:
                 "capabilities": ["tinyllama", "initial_generation", "creative_writing", "fast_response"],
                 "metadata": {
                     "gpu_memory": "24GB", 
-                    "models": ["tinyllama:latest"],
+                    "models": ["qwen2.5-coder:7b-instruct-q4_K_M"],
                     "response_time": "fast",
                     "specialization": "Quick creative text generation"
                 }
@@ -112,8 +112,8 @@ class DistributedNodeRegistry:
         node_2_capabilities = []
         node_2_model = None
         
-        # First, try to find Mistral models
-        for model in ["mistral:7b-instruct-q4_K_M", "mistral-nemo:12b", "mistral-small:24b-instruct-2501-q4_K_M"]:
+        # First, try to find Qwen3 or Mistral models
+        for model in ["qwen3-coder:30b-a3b-q4_K_M", "qwen3:30b-instruct", "qwen3:14b-q4_K_M", "qwen3-coder:30b-a3b-q4_K_M", "mistral-nemo:12b", "mistral-small:24b-instruct-2501-q4_K_M"]:
             if model in available_models:
                 mistral_model = model
                 node_2_capabilities = ["mistral", "enhancement", "literary_refinement", "analysis"]
@@ -128,10 +128,10 @@ class DistributedNodeRegistry:
                     node_2_model = model
                     break
         
-        # If still no model, use tinyllama as fallback for enhancement
-        if not node_2_model and "tinyllama:latest" in available_models:
+        # If still no model, use Qwen as fallback for enhancement
+        if not node_2_model and ("qwen2.5-coder:7b-instruct-q4_K_M" in available_models or "qwen2.5-coder:7b-instruct-q4_K_M" in available_models):
             node_2_capabilities = ["mistral", "enhancement", "literary_refinement", "analysis", "tinyllama"]  # Include mistral capability for compatibility
-            node_2_model = "tinyllama:latest"
+            node_2_model = "qwen2.5-coder:7b-instruct-q4_K_M" if "qwen2.5-coder:7b-instruct-q4_K_M" in available_models else "qwen2.5-coder:7b-instruct-q4_K_M"
         
         # Always create the second node with some capability
         if node_2_model:
@@ -611,11 +611,11 @@ class DistributedA2AAgent(SMCPAgent):
         if "tinyllama" in target_node.capabilities or "mistral" in target_node.capabilities or "llama" in target_node.capabilities:
             # Determine which model to use based on node capabilities and metadata
             if "tinyllama" in target_node.capabilities:
-                model = "tinyllama:latest"
+                model = "qwen2.5-coder:7b-instruct-q4_K_M"
             elif "mistral" in target_node.capabilities:
                 # Use the actual model specified in metadata if available
                 models_list = target_node.metadata.get("models", [])
-                model = models_list[0] if models_list else "mistral:7b-instruct-q4_K_M"
+                model = models_list[0] if models_list else "qwen3-coder:30b-a3b-q4_K_M"
             elif "llama" in target_node.capabilities:
                 # Use the actual model specified in metadata if available
                 models_list = target_node.metadata.get("models", [])

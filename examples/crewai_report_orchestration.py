@@ -237,14 +237,14 @@ class SMCPA2ATool(BaseTool):
                 })
             
             # Create A2A workflow based on model preference  
-            if model_preference == "qwen3" or model_preference == "mistral":
+            if model_preference == "qwen3" or model_preference == "qwen3-coder":
                 workflow_steps = [{"capability": "qwen3", "task_type": "business_analysis"}]
             elif model_preference == "creative":
-                workflow_steps = [{"capability": "tinyllama", "task_type": "creative_generation"}]
+                workflow_steps = [{"capability": "qwen2.5-coder", "task_type": "creative_generation"}]
             else:
                 # Use both models for comprehensive analysis
                 workflow_steps = [
-                    {"capability": "tinyllama", "task_type": "initial_analysis"},
+                    {"capability": "qwen2.5-coder", "task_type": "initial_analysis"},
                     {"capability": "qwen3", "task_type": "enhancement"}
                 ]
             
@@ -594,16 +594,16 @@ class CrewAISMCPOrchestrator:
         """Register local AI agents for A2A capabilities"""
         print("   🧠 Registering AI agents for A2A capabilities...")
         
-        # Create Qwen3 14B creative agent (replacing TinyLLama)
-        tinyllama_info = AgentInfo(
+        # Create Qwen3 14B creative agent (replacing Qwen 2.5 Coder 7B)
+        qwen2.5-coder_info = AgentInfo(
             agent_id="local_qwen14b",
             name="Local Qwen3 14B Agent", 
             description="Fast creative text generation and analysis using Qwen3 14B",
-            specialties=["tinyllama", "creative_writing", "initial_analysis", "qwen3"],
+            specialties=["qwen2.5-coder", "creative_writing", "initial_analysis", "qwen3"],
             capabilities=["poem_generation", "creative_generation", "business_analysis"]
         )
         
-        qwen_creative_agent = LocalAIAgent(self.a2a_agent.config, tinyllama_info, "qwen3:14b-q4_K_M")
+        qwen_creative_agent = LocalAIAgent(self.a2a_agent.config, qwen2.5-coder_info, "qwen3:14b-q4_K_M")
         cluster_registry.register_local_agent(qwen_creative_agent)
         
         # Create Qwen3 30B agent for advanced analysis
@@ -889,7 +889,7 @@ class CrewAISMCPOrchestrator:
         print(f"   • Total time: {execution_time:.2f} seconds")
         print(f"   • Agents: 4 (Data Analyst, Business Analyst, Report Writer, Quality Reviewer)")
         print(f"   • SMCP Connectors: DuckDB, Filesystem, A2A Coordination")
-        print(f"   • AI Models: TinyLLama, Mistral (via SMCP A2A)")
+        print(f"   • AI Models: Qwen 2.5 Coder 7B, Qwen3 Coder (via SMCP A2A)")
         print(f"   • Reports stored: ./crewai_reports/")
         
         # Clean up

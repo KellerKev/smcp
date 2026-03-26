@@ -51,7 +51,10 @@ else
     sleep 5
 fi
 
-echo "   Pulling required AI models..."
+echo "   Pulling required AI models (Qwen models)..."
+ollama pull qwen2.5-coder:7b-instruct-q4_K_M || true
+ollama pull qwen3-coder:30b-a3b-q4_K_M || true
+# Pull legacy models for compatibility
 ollama pull tinyllama:latest || true
 ollama pull mistral:7b-instruct-q4_K_M || true
 echo "✅ Ollama setup complete"
