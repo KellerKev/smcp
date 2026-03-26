@@ -3,12 +3,6 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 🎬 Live Demo
-
-![SMCP Multi-Agent Coordination Demo](smcp_clean_demo.gif)
-
-*Watch SMCP coordinate multiple AI agents to generate a security report in real-time! This demo shows the complete workflow including architecture visualization, agent registration, security configuration, parallel task execution with progress bars, and actual report generation - all completing in under 4 seconds.*
-
 ## 🚀 Overview
 
 SMCP (Secure Model Context Protocol) is a proof-of-concept that demonstrates how the Model Context Protocol (MCP) can be extended with security features and multi-agent coordination capabilities. This project explores potential improvements to MCP for scenarios requiring authentication, encryption, and agent-to-agent communication.
