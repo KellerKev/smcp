@@ -678,30 +678,33 @@ class CrewAISMCPOrchestrator:
         # Task 1: Data Analysis
         data_analysis_task = CrewAITask(
             description=f"""
-            Extract and analyze {business_domain} business data using the SMCP DuckDB connector.
+            Extract and analyze {business_domain} business data.
             
-            Execute this SQL query to get the core business metrics:
+            Use the tool 'smcp_duckdb_query' with this SQL query:
             {data_query}
             
-            Provide a detailed analysis of:
+            After getting the query results, analyze:
             1. Key performance indicators and trends
             2. Top performing segments/locations/products
             3. Areas of concern or opportunity
             4. Data quality and completeness assessment
             
             Focus on actionable insights for {focus_area}.
+            Important: Use only the 'smcp_duckdb_query' tool for database queries.
             """,
-            expected_output="Comprehensive data analysis with key metrics, trends, and initial insights"
+            expected_output="Comprehensive data analysis with key metrics, trends, and initial insights",
+            agent=data_analyst
         )
         
         # Task 2: Business Intelligence Analysis
         business_intelligence_task = CrewAITask(
             description=f"""
-            Using the data analysis results, perform advanced AI-driven business intelligence analysis.
+            Using the data analysis results, perform advanced business intelligence analysis.
             
-            Request AI analysis for: "Analyze the {business_domain} performance data and provide strategic recommendations for {focus_area}. Focus on growth opportunities, risk mitigation, and operational improvements."
+            Use the tool 'smcp_a2a_analysis' with this analysis request:
+            "Analyze the {business_domain} performance data and provide strategic recommendations for {focus_area}. Focus on growth opportunities, risk mitigation, and operational improvements."
             
-            Use model preference: "mistral" for sophisticated business analysis.
+            Set model_preference to "mistral" for sophisticated business analysis.
             
             Provide:
             1. Strategic interpretation of the data patterns
@@ -709,18 +712,22 @@ class CrewAISMCPOrchestrator:
             3. Competitive positioning insights
             4. Risk factors and mitigation strategies  
             5. Growth opportunities and expansion recommendations
+            
+            Important: Use only the 'smcp_a2a_analysis' tool for AI analysis.
             """,
-            expected_output="Strategic business intelligence with actionable recommendations and risk assessment"
+            expected_output="Strategic business intelligence with actionable recommendations and risk assessment",
+            agent=business_analyst
         )
         
         # Task 3: Executive Report Writing
         report_writing_task = CrewAITask(
             description=f"""
-            Create a comprehensive executive-level business report combining data analysis and strategic insights.
+            Create a comprehensive executive-level business report.
             
-            Request AI assistance for: "Help write an executive business report for {business_domain} performance analysis, incorporating data insights and strategic recommendations for C-suite presentation."
+            First, use 'smcp_a2a_analysis' to help generate report content with this request:
+            "Help write an executive business report for {business_domain} performance analysis, incorporating data insights and strategic recommendations for C-suite presentation."
             
-            Use model preference: "both" for comprehensive report generation.
+            Set model_preference to "both" for comprehensive report generation.
             
             The report should include:
             1. Executive Summary (key findings and recommendations)
@@ -730,36 +737,42 @@ class CrewAISMCPOrchestrator:
             5. Implementation Roadmap
             6. Appendix (supporting data and methodology)
             
-            Write the final report to file: "reports/{business_domain}_executive_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-            Format: markdown
+            Then use 'smcp_filesystem_write' to save the report:
+            - file_path: "reports/{business_domain}_executive_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+            - file_format: "markdown"
             
-            Ensure the report is professional, data-driven, and suitable for C-suite presentation.
+            Important: Use 'smcp_a2a_analysis' for content generation and 'smcp_filesystem_write' for saving.
             """,
-            expected_output="Professional executive report saved to filesystem via SMCP connector"
+            expected_output="Professional executive report saved to filesystem via SMCP connector",
+            agent=report_writer
         )
         
         # Task 4: Quality Review and Validation
         quality_review_task = CrewAITask(
             description=f"""
-            Review and validate the final {business_domain} executive report for accuracy, completeness, and quality.
+            Review and validate the final {business_domain} executive report.
             
-            Perform comprehensive quality assurance:
+            Use 'smcp_filesystem_read' to read the generated report, then perform quality assurance:
             1. Verify all data references and calculations
             2. Check report structure and flow
             3. Ensure recommendations are actionable and specific
             4. Validate business terminology and accuracy
             5. Review for grammar, clarity, and professional presentation
             
-            Create a quality assessment summary and write it to file: "reports/{business_domain}_quality_review_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-            Format: markdown
+            Create a quality assessment and use 'smcp_filesystem_write' to save it:
+            - file_path: "reports/{business_domain}_quality_review_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+            - file_format: "markdown"
             
             Include:
             - Overall quality score (1-10)
             - Areas of strength
             - Areas for improvement
             - Final validation status
+            
+            Important: Use 'smcp_filesystem_read' to read reports and 'smcp_filesystem_write' to save the review.
             """,
-            expected_output="Quality review assessment with validation status and recommendations"
+            expected_output="Quality review assessment with validation status and recommendations",
+            agent=quality_reviewer
         )
         
         print("✅ Analysis tasks created")
