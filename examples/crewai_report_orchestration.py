@@ -32,6 +32,7 @@ This demonstrates the power of combining:
 
 import asyncio
 import json
+import logging
 import sys
 import time
 import uuid
@@ -41,6 +42,17 @@ from typing import Dict, Any, List, Optional
 
 # Add parent directory to imports
 sys.path.append(str(Path(__file__).parent.parent))
+
+# Set up comprehensive logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('crewai_demo.log', mode='w')
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Pydantic imports for schema
 from pydantic import BaseModel, Field
@@ -91,6 +103,7 @@ class SMCPDuckDBTool(BaseTool):
     
     def _run(self, sql_query: str) -> str:
         """Execute SQL query synchronously"""
+        logger.info(f"🦆 SMCPDuckDBTool executing SQL query: {sql_query[:100]}...")
         # Run async query in sync context properly
         try:
             # Try to use existing event loop if available
@@ -122,6 +135,7 @@ class SMCPDuckDBTool(BaseTool):
     
     async def _execute_query(self, sql_query: str) -> str:
         """Execute SQL query and return formatted results"""
+        logger.debug(f"🦆 Executing query via SMCP DuckDB connector: {sql_query}")
         try:
             request = QueryRequest(
                 query_id=f"crewai_{int(time.time())}",
@@ -132,12 +146,13 @@ class SMCPDuckDBTool(BaseTool):
             result = await self._duckdb_connector.execute_query(request)
             
             if result.status == "success" and result.data:
+                logger.info(f"✅ DuckDB query successful: {result.row_count} rows returned in {result.execution_time:.3f}s")
                 # Format results for AI agent consumption
                 formatted_data = []
                 for row in result.data[:10]:  # Limit to first 10 rows
                     formatted_data.append(row)
                 
-                return json.dumps({
+                response_data = json.dumps({
                     "status": "success",
                     "query": sql_query,
                     "row_count": result.row_count,
@@ -145,7 +160,10 @@ class SMCPDuckDBTool(BaseTool):
                     "data": formatted_data,
                     "columns": result.columns
                 }, indent=2)
+                logger.debug(f"🦆 DuckDB response (first 200 chars): {response_data[:200]}...")
+                return response_data
             else:
+                logger.error(f"❌ DuckDB query failed: {result.error}")
                 return json.dumps({
                     "status": "error",
                     "query": sql_query,
@@ -153,6 +171,7 @@ class SMCPDuckDBTool(BaseTool):
                 })
                 
         except Exception as e:
+            logger.error(f"❌ DuckDB query exception: {str(e)}")
             return json.dumps({
                 "status": "error",
                 "query": sql_query,
@@ -172,6 +191,7 @@ class SMCPA2ATool(BaseTool):
     
     def _run(self, analysis_request: str = "", model_preference: str = "qwen3", **kwargs) -> str:
         """Execute A2A analysis synchronously"""
+        logger.info(f"🤖 SMCPA2ATool starting analysis: request='{analysis_request[:50]}...', model={model_preference}")
         try:
             # Try to use existing event loop if available
             loop = asyncio.get_running_loop()
@@ -200,6 +220,7 @@ class SMCPA2ATool(BaseTool):
     
     async def _execute_a2a_analysis(self, analysis_request: str, model_preference: str) -> str:
         """Execute A2A analysis and return results"""
+        logger.debug(f"🧠 Starting A2A workflow: {model_preference} model for '{analysis_request[:30]}...'")
         try:
             # Validate inputs
             if not analysis_request:
@@ -220,15 +241,19 @@ class SMCPA2ATool(BaseTool):
                     {"capability": "qwen3", "task_type": "enhancement"}
                 ]
             
+            logger.info(f"🔄 Executing A2A workflow with {len(workflow_steps)} steps")
             result = await self._a2a_agent._handle_distributed_workflow(
                 workflow_steps=workflow_steps,
                 input_data={"analysis_request": analysis_request},
                 routing_strategy="optimal"
             )
+            logger.debug(f"🔄 A2A workflow result status: {result.get('status')}")
             
             # Extract final result from the workflow response
             final_data = result.get("final_data", {})
             analysis_result = "No result available"
+            
+            logger.debug(f"🔍 Final data keys: {list(final_data.keys()) if final_data else 'None'}")
             
             if final_data:
                 # Try to get generated content or analysis result
@@ -239,6 +264,9 @@ class SMCPA2ATool(BaseTool):
                     final_data.get("analysis_result") or
                     str(final_data)
                 )
+                logger.info(f"✅ A2A analysis completed: {len(analysis_result)} chars generated")
+            else:
+                logger.warning(f"⚠️  A2A workflow returned no final_data")
             
             return json.dumps({
                 "status": "success" if result.get("status") == "completed" else "error",
@@ -253,6 +281,7 @@ class SMCPA2ATool(BaseTool):
             }, indent=2)
             
         except Exception as e:
+            logger.error(f"❌ A2A analysis exception: {str(e)}")
             return json.dumps({
                 "status": "error",
                 "analysis_request": analysis_request,
@@ -347,6 +376,8 @@ class LocalAIAgent(SMCPAgent):
     
     async def _handle_business_analysis(self, analysis_request: str = None, **kwargs) -> dict:
         """Handle business analysis requests"""
+        logger.info(f"🧠 LocalAIAgent._handle_business_analysis called with model: {self.model_name}")
+        logger.debug(f"🧠 Parameters: analysis_request='{analysis_request}', kwargs={list(kwargs.keys())}")
         try:
             # Extract analysis request from various parameter formats
             if not analysis_request:
@@ -356,6 +387,8 @@ class LocalAIAgent(SMCPAgent):
                     kwargs.get("content") or
                     "General business analysis"
                 )
+            
+            logger.debug(f"🧠 Final analysis_request: '{analysis_request[:50]}...'")
             
             # Use Ollama to generate business analysis
             import aiohttp
@@ -379,11 +412,14 @@ class LocalAIAgent(SMCPAgent):
                 "stream": False
             }
             
+            logger.info(f"🔗 Calling Ollama API for business analysis with model: {self.model_name}")
             async with aiohttp.ClientSession() as session:
                 async with session.post("http://localhost:11434/api/generate", json=payload) as resp:
+                    logger.debug(f"🔗 Ollama response status: {resp.status}")
                     if resp.status == 200:
                         result = await resp.json()
                         content = result.get("response", "No analysis available")
+                        logger.info(f"✅ Ollama generated {len(content)} chars for business analysis")
                         
                         return {
                             "status": "completed",
@@ -392,9 +428,11 @@ class LocalAIAgent(SMCPAgent):
                             "task_type": "business_analysis"
                         }
                     else:
+                        logger.error(f"❌ Ollama request failed with status: {resp.status}")
                         return {"status": "error", "error": f"Ollama request failed: {resp.status}"}
                         
         except Exception as e:
+            logger.error(f"❌ LocalAIAgent exception: {str(e)}")
             return {"status": "error", "error": str(e)}
     
     async def _handle_creative_generation(self, theme: str = None, analysis_request: str = None, **kwargs) -> dict:
@@ -436,9 +474,11 @@ class LocalAIAgent(SMCPAgent):
                             "task_type": "creative_generation"
                         }
                     else:
+                        logger.error(f"❌ Ollama request failed with status: {resp.status}")
                         return {"status": "error", "error": f"Ollama request failed: {resp.status}"}
                         
         except Exception as e:
+            logger.error(f"❌ LocalAIAgent exception: {str(e)}")
             return {"status": "error", "error": str(e)}
     
     async def _handle_enhancement(self, content: str = None, **kwargs) -> dict:
@@ -488,9 +528,11 @@ class LocalAIAgent(SMCPAgent):
                             "task_type": "enhancement"
                         }
                     else:
+                        logger.error(f"❌ Ollama request failed with status: {resp.status}")
                         return {"status": "error", "error": f"Ollama request failed: {resp.status}"}
                         
         except Exception as e:
+            logger.error(f"❌ LocalAIAgent exception: {str(e)}")
             return {"status": "error", "error": str(e)}
 
 
@@ -506,6 +548,7 @@ class CrewAISMCPOrchestrator:
     async def setup_smcp_infrastructure(self):
         """Setup all SMCP connectors and A2A coordination"""
         print("🔧 Setting up SMCP infrastructure...")
+        logger.info("🚀 Starting SMCP infrastructure setup")
         
         # Setup DuckDB connector (use existing database)
         print("   🦆 Setting up DuckDB connector...")
