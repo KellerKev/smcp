@@ -33,12 +33,17 @@ Real Business Intelligence - Not Climate Change Reports!
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+
+# Suppress LiteLLM tracking
+os.environ["LITELLM_LOG"] = "ERROR"
+os.environ["LITELLM_DISABLE_SPEND_LOGS"] = "true"
 
 # Add parent directory to imports
 sys.path.append(str(Path(__file__).parent.parent))
@@ -52,6 +57,14 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Disable verbose logging from CrewAI dependencies
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("litellm").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 # Pydantic imports for schema
 from pydantic import BaseModel, Field
