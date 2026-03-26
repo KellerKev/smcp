@@ -5,9 +5,9 @@
 
 ## 🎬 Live Demo
 
-![SMCP Multi-Agent Coordination Demo](smcp_full_demo.gif)
+![SMCP Multi-Agent Coordination Demo](smcp_clean_demo.gif)
 
-*Watch SMCP coordinate multiple AI agents to generate a security report in real-time! See the complete workflow: agent registration, security setup, parallel task execution, and results aggregation.*
+*Watch SMCP coordinate multiple AI agents to generate a security report in real-time! This demo shows the complete workflow including architecture visualization, agent registration, security configuration, parallel task execution with progress bars, and actual report generation - all completing in under 4 seconds.*
 
 ## 🚀 Overview
 

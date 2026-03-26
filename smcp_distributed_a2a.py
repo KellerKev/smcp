@@ -275,7 +275,7 @@ class DistributedA2AAgent(SMCPAgent):
     
     def _register_distributed_capabilities(self):
         """Register distributed A2A capabilities"""
-        from scp_core import Capability
+        from smcp_core import Capability
         
         # Cross-server task delegation
         cross_server_cap = Capability(

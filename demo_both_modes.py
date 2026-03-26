@@ -5,7 +5,7 @@ Demo script to show both encrypted and plain storage modes
 
 import asyncio
 import logging
-from scp_distributed_a2a import demo_distributed_a2a
+from smcp_distributed_a2a import demo_distributed_a2a
 
 async def run_both_demos():
     print("🚀 Running Distributed A2A Demo in BOTH modes")

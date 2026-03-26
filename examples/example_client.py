@@ -5,7 +5,9 @@ Example SCP Client - Demonstrates how to use the SCP client SDK
 
 import asyncio
 import sys
-from scp_client import SCPClient, SCPConfig, scp_client
+from smcp_client import SMCPClient as SCPClient
+from smcp_config import SMCPConfig as SCPConfig
+from smcp_client_main import smcp_client as scp_client
 
 
 async def run_client_demo():

@@ -6,8 +6,16 @@ Example SCP Server - Demonstrates how to set up and run an SCP server
 import asyncio
 import sys
 from datetime import datetime
-from scp_server import SCPServer, tool
-from scp_client import SCPConfig
+from smcp_server import SMCPServer as SCPServer
+from smcp_config import SMCPConfig as SCPConfig
+
+def tool(name, description):
+    """Tool decorator placeholder"""
+    def decorator(func):
+        func.tool_name = name
+        func.tool_description = description
+        return func
+    return decorator
 
 
 def main():
