@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SCP A2A Network Server - Agent-to-Agent communication over network
-Demonstrates agents communicating through SCP protocol over WebSocket
+SMCP A2A Network Server - Agent-to-Agent communication over network
+Demonstrates agents communicating through SMCP protocol over WebSocket
 """
 
 import asyncio
@@ -12,20 +12,20 @@ from typing import Dict, List, Optional
 from datetime import datetime
 import click
 
-from scp_config import SCPConfig
-from scp_server import SCPServer, tool
-from scp_a2a import SCPAgent, AgentInfo, AgentRegistry
+from smcp_config import SMCPConfig
+from smcp_server import SMCPServer, tool
+from smcp_a2a import SMCPAgent, AgentInfo, AgentRegistry
 
 
-class A2ANetworkServer(SCPServer):
-    """Extended SCP Server with A2A network capabilities"""
+class A2ANetworkServer(SMCPServer):
+    """Extended SMCP Server with A2A network capabilities"""
     
-    def __init__(self, config: SCPConfig):
+    def __init__(self, config: SMCPConfig):
         super().__init__(config)
         
         # A2A specific components
         self.agent_registry = AgentRegistry()
-        self.network_agents: Dict[str, SCPAgent] = {}
+        self.network_agents: Dict[str, SMCPAgent] = {}
         
         # Register A2A network tools
         self._register_a2a_tools()
@@ -46,7 +46,7 @@ class A2ANetworkServer(SCPServer):
             endpoint=f"ws://{self.config.server.host}:{self.config.server.port}"
         )
         
-        coordinator = SCPAgent(self.config, coordinator_info, self.agent_registry)
+        coordinator = SMCPAgent(self.config, coordinator_info, self.agent_registry)
         self.network_agents[coordinator_info.agent_id] = coordinator
         
         # Specialized Worker Agent
@@ -59,7 +59,7 @@ class A2ANetworkServer(SCPServer):
             endpoint=f"ws://{self.config.server.host}:{self.config.server.port}"
         )
         
-        worker = SCPAgent(self.config, worker_info, self.agent_registry)
+        worker = SMCPAgent(self.config, worker_info, self.agent_registry)
         self.network_agents[worker_info.agent_id] = worker
         
         # AI-Enhanced Agent (with Ollama integration)
@@ -72,7 +72,7 @@ class A2ANetworkServer(SCPServer):
             endpoint=f"ws://{self.config.server.host}:{self.config.server.port}"
         )
         
-        ai_agent = SCPAgent(self.config, ai_info, self.agent_registry)
+        ai_agent = SMCPAgent(self.config, ai_info, self.agent_registry)
         
         # Add Ollama capability to AI agent
         ai_capability = self.node.capabilities.get("ai_chat")
@@ -214,7 +214,7 @@ class A2ANetworkServer(SCPServer):
 @click.option('--port', type=int, default=8765, help='Server port')
 @click.option('--log-level', default='INFO', help='Logging level')
 def main(config, host, port, log_level):
-    """Start SCP A2A Network Server"""
+    """Start SMCP A2A Network Server"""
     
     # Setup logging
     logging.basicConfig(
@@ -224,7 +224,7 @@ def main(config, host, port, log_level):
     
     # Load configuration
     try:
-        scp_config = SCPConfig.load(config_file=config)
+        scp_config = SMCPConfig.load(config_file=config)
         
         # Override with CLI args
         scp_config.server.host = host
@@ -235,7 +235,7 @@ def main(config, host, port, log_level):
         return
     
     # Display startup info
-    click.echo("🚀 Starting SCP A2A Network Server")
+    click.echo("🚀 Starting SMCP A2A Network Server")
     click.echo("=" * 60)
     click.echo(f"🏢 Server Configuration:")
     click.echo(f"   Host: {scp_config.server.host}")
@@ -266,7 +266,7 @@ def main(config, host, port, log_level):
             cap = server.node.capabilities[tool_name]
             click.echo(f"   - {tool_name}: {cap.description}")
     
-    click.echo("\n🎯 Connect with SCP client to test A2A functionality")
+    click.echo("\n🎯 Connect with SMCP client to test A2A functionality")
     click.echo("   Example: pixi run client --tool network_agent_discovery")
     click.echo("=" * 60)
     
