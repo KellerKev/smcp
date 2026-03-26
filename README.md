@@ -78,31 +78,61 @@ SMCP is a technical exploration that shows how MCP could be enhanced with:
 
 - Python 3.8+
 - Ollama (for AI features)
-- DuckDB (optional, for database features)
+- Docker (for MindsDB)
+- Pixi package manager
 
 ### Quick Start
 
 1. **Clone the repository**:
 ```bash
-git clone https://github.com/yourusername/smcp.git
+git clone https://github.com/KellerKev/smcp.git
 cd smcp
 ```
 
-2. **Install dependencies using pixi** (recommended):
+2. **Install dependencies using pixi**:
 ```bash
+# Install pixi if you don't have it
+curl -fsSL https://pixi.sh/install.sh | bash
+
+# Install all dependencies
 pixi install
 ```
 
-Or using pip:
+3. **Setup Ollama and AI Models**:
 ```bash
-pip install websockets pydantic cryptography PyJWT aiohttp duckdb
-```
+# Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
 
-3. **Install Ollama models** (for AI features):
-```bash
+# Start Ollama service
+ollama serve &
+
+# Pull required models
 ollama pull tinyllama:latest
 ollama pull mistral:7b-instruct-q4_K_M
 ```
+
+4. **Initialize DuckDB with Sample Data**:
+```bash
+# Generate sample data
+pixi run python tools/generate_sample_data.py
+
+# Create database and tables
+pixi run python examples/duckdb_integration_example.py
+```
+
+5. **Setup MindsDB (Optional - for ML features)**:
+```bash
+# Run MindsDB in Docker
+docker run -d --name mindsdb_smcp \
+  -p 47335:47334 \
+  -p 47336:47335 \
+  mindsdb/mindsdb
+
+# Verify it's running
+curl http://localhost:47335/
+```
+
+📚 **Full Setup Guide**: See [SETUP_GUIDE.md](SETUP_GUIDE.md) for detailed instructions
 
 ## 🎯 Quick Demo
 

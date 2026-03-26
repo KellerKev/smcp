@@ -51,7 +51,7 @@ class SMCPMindDBAgent(DistributedA2AAgent):
         print("   Integration: MindDB AI Database + Ollama Models")
         print("   Capabilities: SQL-ML, Time Series, NLP, Predictive Analytics")
     
-    async def connect_mindsdb(self, url: str = "http://localhost:47337/sse", api_key: str = "demo_key"):
+    async def connect_mindsdb(self, url: str = "http://localhost:47335", api_key: str = "demo_key"):
         """Connect to MindDB server"""
         try:
             # Create MindDB configuration
@@ -88,7 +88,7 @@ class SMCPMindDBAgent(DistributedA2AAgent):
                 payload = {"query": query}
                 
                 async with session.post(
-                    "http://localhost:47334/api/sql/query",
+                    "http://localhost:47335/api/sql/query",
                     json=payload,
                     headers={"Content-Type": "application/json"},
                     timeout=30
