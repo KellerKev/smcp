@@ -287,7 +287,7 @@ config = SMCPConfig(
    - Rotate keys regularly
    - Never commit secrets to version control
 
-3. **Enable HTTPS in production**:
+3. **Enable HTTPS for deployment**:
    ```python
    config.server_url = "wss://your-domain.com"  # WSS for secure WebSocket
    ```
@@ -344,13 +344,13 @@ This project is licensed under the MIT License.
 
 ## 🚦 Status
 
-- ✅ **Core SMCP**: Production ready
-- ✅ **Basic/Encrypted modes**: Stable
-- ✅ **A2A System**: Fully functional
-- ✅ **DuckDB Connector**: Ready
-- ✅ **CrewAI Integration**: Working (requires CrewAI)
-- 🚧 **Enterprise Mode**: In development
+- ✅ **Core SMCP**: Proof-of-concept working
+- ✅ **Basic/Encrypted modes**: Functional demonstrations
+- ✅ **A2A System**: Working prototype
+- ✅ **DuckDB Connector**: Example implementation
+- ✅ **CrewAI Integration**: Working demo (requires CrewAI)
+- 🚧 **Enterprise Mode**: Experimental
 
 ---
 
-**Ready to secure your MCP deployments?** Start with the [Quick Demo](#-quick-demo) above!
+**Want to explore MCP security concepts?** Start with the [Quick Demo](#-quick-demo) above!
