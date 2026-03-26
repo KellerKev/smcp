@@ -24,6 +24,19 @@ SMCP is a technical exploration that shows how MCP could be enhanced with:
 - **Security Experiments**: JWT/OAuth2, ECDH key exchange, and AES encryption
 - **MCP Compatibility**: Maintains compatibility while adding optional security layers
 
+## 📚 Documentation
+
+### Architecture & Design
+- [**Architecture Overview**](docs/ARCHITECTURE_OVERVIEW.md) - Complete system architecture, data flows, and design patterns
+- [**Demo Architectures**](docs/DEMO_ARCHITECTURES.md) - Detailed walkthroughs of each demo with step-by-step flows
+- [**MCP vs SMCP Comparison**](docs/MCP_SMCP_COMPARISON.md) - Comprehensive comparison between standard MCP and SMCP
+- [**Use Cases**](docs/USE_CASES.md) - Real-world applications and implementation scenarios
+
+### Technical Guides
+- [**AI SQL Generation Guide**](docs/AI_SQL_GENERATION_GUIDE.md) - Using LLMs for SQL query generation
+- [**Connector Development Guide**](docs/CONNECTOR_DEVELOPMENT_GUIDE.md) - Building custom connectors
+- [**CrewAI Integration**](docs/CREWAI_SMCP_INTEGRATION.md) - Integrating CrewAI with SMCP
+
 ## ✨ Key Features
 
 ### 🔐 Security Mode Experiments
