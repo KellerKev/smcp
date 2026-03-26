@@ -689,7 +689,7 @@ class CrewAISMCPOrchestrator:
             
             Use the tool smcp_duckdb_query to execute this exact SQL query:
             
-            sql_query: """{data_query}"""
+            sql_query: {data_query}
             
             After getting the query results, analyze:
             1. Key performance indicators and trends
