@@ -1,0 +1,42 @@
+node_id = "scp_node"
+server_url = "ws://localhost:8765"
+api_key = "demo_key_123"
+secret_key = "default_secret_key"
+jwt_secret = "default_jwt_secret"
+
+[server]
+host = "localhost"
+port = 8765
+max_connections = 100
+ping_interval = 20
+ping_timeout = 10
+
+[client]
+auto_reconnect = true
+reconnect_delay = 5
+max_retries = 3
+timeout = 30
+heartbeat_interval = 30
+
+[ai]
+ollama_url = "http://localhost:11434"
+default_model = "tinyllama:latest"
+timeout = 30
+max_tokens = 1000
+load_balancing = "round_robin"
+
+[ai.model_routing]
+
+[security]
+require_signature = true
+max_message_size = 1048576
+token_expiry = 3600
+rate_limit = 100
+
+[logging]
+level = "INFO"
+max_size = "10MB"
+backup_count = 3
+format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+[custom_tools]

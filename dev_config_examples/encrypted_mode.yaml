@@ -1,0 +1,33 @@
+# Encrypted Mode Configuration - ECDH + Full Message Encryption
+# Ideal for dev/test or production hardening
+
+security:
+  mode: "encrypted"
+  crypto:
+    key_exchange: "ecdh"
+    perfect_forward_secrecy: true
+    message_encryption: true
+    
+    # Auto-generated keys for development
+    client_private_key_path: "./ecdh_keys/client_private.pem"
+    client_public_key_path: "./ecdh_keys/client_public.pem"
+    server_public_key_path: "./ecdh_keys/server_public.pem"
+  
+  # JWT tokens encrypted inside message payload
+  jwt:
+    enabled: true
+    secret: "your_jwt_secret_here"
+    algorithm: "HS256"
+    location: "encrypted_payload"  # Inside encrypted message
+  
+  # Full message encryption
+  transport:
+    encryption: "ecdh_aes256"  # Message-level encryption
+    token_location: "payload"   # JWT inside encrypted payload
+
+cluster:
+  enabled: true
+  simulate_distributed: true
+
+# Can use ws:// since messages are encrypted
+server_url: "ws://localhost:8765"

@@ -1,0 +1,120 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+*.manifest
+*.spec
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Archive folder (local development files)
+archive/
+
+# Generated data and outputs
+*_poems/
+*_data/
+*_audit/
+*_storage/
+local_poems/
+encrypted_poems/
+enterprise_poems/
+basic_poems/
+crewai_reports/
+federated_storage/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Configuration files with secrets
+*.env
+.env.local
+.env.*.local
+*_private.pem
+*_secret.key
+
+# Logs
+*.log
+logs/
+*.out
+
+# Test files
+test_*.py
+*_test.py
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+*.old
+tmp/
+temp/
+
+# Batch and demo files
+batch_*.json
+demo_*.json
+
+# Keys and certificates (keep example keys)
+!dev_keys/
+!ecdh_keys/
+
+# Documentation builds
+docs/_build/
+docs/.doctrees/
+
+# Package manager
+pixi.lock
+.pixi/
+*.egg-info
+
+# OS files
+Thumbs.db
+desktop.ini
+
+# Output directories
+output/
+results/
+reports/
+
+# Cache
+.cache/
+*.cache
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pytest
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb

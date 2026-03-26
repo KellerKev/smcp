@@ -1,0 +1,79 @@
+[workspace]
+channels = ["conda-forge"]
+name = "scp_test"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+test = "python test_scp.py"
+test-a2a = "python test_a2a.py"
+server = "python scp_server_main.py"
+client = "python scp_client_main.py"
+server-config = "python scp_server_main.py --create-config"
+client-interactive = "python scp_client_main.py --mode interactive"
+client-demo = "python scp_client_main.py --mode demo"
+validate-config = "python scp_config.py"
+ollama_test = "python examples/example_ollama_test.py"
+
+# A2A (Agent-to-Agent) tasks
+a2a-demo = "python example_a2a.py"
+a2a-test = "python test_a2a.py"
+a2a-server = "python scp_a2a_server.py"
+
+# Showcase and examples
+showcase = "python examples/showcase_complete_system.py"
+poem-sample = "python examples/ollama_poem_sample.py"
+mcp-storage-demo = "python examples/secure_mcp_storage.py"
+enterprise-poem = "python examples/enterprise_poem_sample.py"
+
+# Security Mode Demos - TinyLLama → Mistral A2A Collaboration
+basic-a2a = "python examples/basic/basic_a2a_demo.py"
+encrypted-a2a = "python examples/encrypted/encrypted_a2a_demo.py"
+basic-poem = "python examples/basic/basic_poem_sample.py"
+encrypted-poem = "python examples/encrypted/encrypted_poem_sample.py"
+basic-enterprise = "python examples/basic/basic_enterprise_sample.py"
+encrypted-enterprise = "python examples/encrypted/encrypted_enterprise_sample.py"
+
+# Security Setup Tools
+generate-ecdh-keys = "python tools/generate_ecdh_keys.py generate"
+validate-ecdh-keys = "python tools/generate_ecdh_keys.py validate"
+setup-dev-security = "python tools/setup_dev_security.py"
+
+# Enterprise features
+distributed-a2a-demo = "python scp_distributed_a2a.py"
+enhanced-auth-demo = "python scp_auth_enhanced.py"
+federated-auth-demo = "python scp_federated_auth.py"
+federated-ollama-demo = "python scp_federated_ollama_demo.py"
+jwt-handshake-demo = "python scp_jwt_handshake.py"
+
+# MCP Bridge and Integration
+mcp-bridge-demo = "python smcp_mcp_bridge.py"
+mindsdb-integration = "python examples/mindsdb_integration_example.py"
+
+# A2A + MCP Bridge Integration Demos
+basic-a2a-mcp = "python examples/basic/basic_a2a_mcp_sample.py"
+encrypted-a2a-mcp = "python examples/encrypted/encrypted_a2a_mcp_sample.py"
+
+# CrewAI + SMCP Orchestration (NEW)
+crewai-report-demo = "python examples/crewai_report_orchestration.py"
+
+# Legacy examples (moved to examples/)
+example-server = "python example_server.py"
+example-client = "python example_client.py"
+
+[dependencies]
+python = ">=3.13.5,<3.14"
+duckdb = ">=1.3.2,<2"
+
+[pypi-dependencies]
+cryptography=">=41.0.0"
+PyJWT=">=2.8.0"
+websockets=">=11.0.0"
+aiohttp=">=3.8.0"
+pyyaml=">=6.0.0"
+requests=">=2.31.0"
+psutil="*"
+tomli="*"
+tomli-w="*"
+click=">=8.0.0"
+crewai=">=0.55.2"

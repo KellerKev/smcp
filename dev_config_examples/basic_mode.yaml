@@ -1,0 +1,27 @@
+# Basic Mode Configuration - Standard JWT + HTTPS
+# Suitable for production with proper TLS setup
+
+security:
+  mode: "basic"
+  crypto:
+    key_exchange: "static"
+    perfect_forward_secrecy: false
+    message_encryption: false
+  
+  # JWT tokens in Authorization headers
+  jwt:
+    enabled: true
+    secret: "your_jwt_secret_here"
+    algorithm: "HS256"
+  
+  # Assumes HTTPS in production
+  transport:
+    encryption: "https"  # TLS provides transport security
+    token_location: "header"  # Authorization: Bearer <token>
+
+cluster:
+  enabled: true
+  simulate_distributed: true  # For development
+
+# For production, change to wss:// and configure proper TLS
+server_url: "ws://localhost:8765"

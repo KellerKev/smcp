@@ -1,0 +1,24 @@
+# Core dependencies
+websockets>=11.0
+pydantic>=2.0
+cryptography>=41.0
+PyJWT>=2.8
+aiohttp>=3.9
+pyyaml>=6.0
+tomli>=2.0
+tomli-w>=1.0
+click>=8.1
+
+# Database connectors
+duckdb>=0.9
+
+# AI and ML (optional)
+# crewai>=0.1  # Uncomment if using CrewAI orchestration
+# ollama>=0.1  # Uncomment if using Ollama integration
+
+# Development dependencies (optional)
+# pytest>=7.4
+# pytest-asyncio>=0.21
+# black>=23.0
+# flake8>=6.0
+# mypy>=1.5
