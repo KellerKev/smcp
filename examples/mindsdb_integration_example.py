@@ -187,18 +187,18 @@ class SMCPMindDBAgent(DistributedA2AAgent):
         if data_result["status"] != "completed":
             return {"status": "error", "error": "Failed to retrieve data from MindDB"}
         
-        # Step 2: Use Mistral 7B for advanced business analysis
-        print("🧠 Step 2: Performing AI analysis with Mistral 7B...")
+        # Step 2: Use Qwen3 Coder 30B for advanced business analysis
+        print("🧠 Step 2: Performing AI analysis with Qwen3 Coder 30B...")
         analysis_task = {
             "prompt": f"{analysis_prompt}\n\nData Context:\n{json.dumps(data_result.get('result', {}), indent=2)}",
-            "model": "mistral:7b-instruct-q4_K_M",
+            "model": "qwen3-coder:30b-a3b-q4_K_M",
             "max_tokens": 1500,
             "temperature": 0.7
         }
         
-        # Route to Mistral through A2A
-        mistral_result = await self._handle_distributed_workflow(
-            workflow_steps=[{"capability": "mistral", "task_type": "business_analysis"}],
+        # Route to Qwen3 Coder through A2A
+        qwen3-coder_result = await self._handle_distributed_workflow(
+            workflow_steps=[{"capability": "qwen3-coder", "task_type": "business_analysis"}],
             input_data=analysis_task,
             routing_strategy="optimal"
         )
@@ -208,14 +208,14 @@ class SMCPMindDBAgent(DistributedA2AAgent):
             "status": "completed",
             "hybrid_analysis": {
                 "data_source": "postgresql_via_mindsdb",
-                "ai_analysis": "mistral_7b_business_intelligence",
+                "ai_analysis": "qwen3-coder_7b_business_intelligence",
                 "data_summary": data_result.get("result", {}),
-                "ai_insights": mistral_result.get("final_data", {}),
+                "ai_insights": qwen3-coder_result.get("final_data", {}),
                 "analysis_timestamp": datetime.now().isoformat()
             },
             "workflow_metadata": {
                 "data_query_time": data_result.get("mindsdb_metadata", {}).get("query_time"),
-                "ai_model_used": "mistral:7b-instruct-q4_K_M",
+                "ai_model_used": "qwen3-coder:30b-a3b-q4_K_M",
                 "hybrid_processing": True,
                 "security_mode": "encrypted" if hasattr(self.config, 'crypto') and self.config.crypto.key_exchange == "ecdh" else "basic"
             }
@@ -420,30 +420,30 @@ async def demo_mindsdb_integration():
         print(f"   📋 {forecast_result.get('error', 'Unknown error')}")
         print("   💡 Create a time series model first or check data availability")
     
-    # Demo 5: Hybrid AI Analysis (PostgreSQL + Mistral)
-    print("\n5️⃣ Demo: Hybrid AI Analysis (PostgreSQL Data + Mistral AI)")
-    print("   Analysis: Customer churn insights using MindDB + Mistral 7B model")
+    # Demo 5: Hybrid AI Analysis (PostgreSQL + Qwen3 Coder)
+    print("\n5️⃣ Demo: Hybrid AI Analysis (PostgreSQL Data + Qwen3 Coder AI)")
+    print("   Analysis: Customer churn insights using MindDB + Qwen3 Coder 30B model")
     
-    # Check Mistral model availability
+    # Check Qwen3 Coder model availability
     try:
         response = requests.get("http://localhost:11434/api/tags", timeout=3)
         ollama_available = response.status_code == 200
         if ollama_available:
             models = response.json().get("models", [])
-            mistral_models = [m for m in models if "mistral" in m.get("name", "").lower()]
+            qwen3-coder_models = [m for m in models if "qwen3-coder" in m.get("name", "").lower()]
             print(f"   🤖 Ollama models available: {len(models)}")
-            print(f"   🔥 Mistral models found: {len(mistral_models)}")
-            for model in mistral_models[:3]:
+            print(f"   🔥 Qwen3 Coder models found: {len(qwen3-coder_models)}")
+            for model in qwen3-coder_models[:3]:
                 print(f"      • {model.get('name', 'Unknown')}")
         else:
             print("   ❌ Ollama not available - hybrid analysis requires Ollama")
             print("   💡 Start Ollama: ollama serve")
-            print("   💡 Install models: ollama pull mistral:7b-instruct-q4_K_M")
-            raise Exception("Hybrid analysis requires working Ollama server with Mistral model")
+            print("   💡 Install models: ollama pull qwen3-coder:30b-a3b-q4_K_M")
+            raise Exception("Hybrid analysis requires working Ollama server with Qwen3 Coder model")
     except Exception as e:
         print(f"   ❌ Ollama connection failed: {e}")
         print("   💡 Start Ollama: ollama serve")
-        print("   💡 Install models: ollama pull mistral:7b-instruct-q4_K_M")
+        print("   💡 Install models: ollama pull qwen3-coder:30b-a3b-q4_K_M")
         raise Exception(f"Hybrid analysis requires working Ollama server: {e}")
     
     # Query PostgreSQL data for analysis
@@ -484,12 +484,12 @@ async def demo_mindsdb_integration():
     if hybrid_result["status"] == "completed":
         print("   ✅ Hybrid analysis completed")
         print("   📊 Data source: PostgreSQL via MindDB")
-        print("   🧠 AI analysis: Mistral 7B Business Intelligence")
+        print("   🧠 AI analysis: Qwen3 Coder 30B Business Intelligence")
         
         insights = hybrid_result.get("hybrid_analysis", {}).get("ai_insights", {})
         if isinstance(insights, dict) and "content" in insights:
             content_preview = insights["content"][:400] + "..." if len(insights["content"]) > 400 else insights["content"]
-            print(f"   💡 Mistral Business Insights:\n      {content_preview}")
+            print(f"   💡 Qwen3 Coder Business Insights:\n      {content_preview}")
         
         # Show PostgreSQL data summary
         data_summary = hybrid_result.get("hybrid_analysis", {}).get("data_summary", {})
@@ -499,7 +499,7 @@ async def demo_mindsdb_integration():
     else:
         print("   ❌ Hybrid analysis failed")
         print("   💡 Make sure both MindDB and Ollama are running correctly")
-        print("   💡 Check Mistral model availability: ollama pull mistral:7b-instruct-q4_K_M")
+        print("   💡 Check Qwen3 Coder model availability: ollama pull qwen3-coder:30b-a3b-q4_K_M")
     
     # Demo 6: Real-time Analytics Dashboard Data
     print("\n6️⃣ Demo: Real-time Analytics Pipeline")

@@ -3,7 +3,7 @@
 Basic Mode Poetry Generation Sample
 =================================
 Demonstrates secure AI poetry generation using standard JWT + HTTPS authentication.
-Features TinyLLama → Mistral → Storage collaboration with production-ready security.
+Features Qwen 2.5 Coder 7B → Qwen3 Coder → Storage collaboration with production-ready security.
 
 Security Model:
 - Standard JWT tokens in Authorization headers
@@ -53,7 +53,7 @@ class BasicPoetryAgent(DistributedA2AAgent):
 
 
 async def demo_basic_poetry_generation():
-    """Demonstrate basic mode poetry generation with TinyLLama → Mistral → Storage workflow"""
+    """Demonstrate basic mode poetry generation with Qwen 2.5 Coder 7B → Qwen3 Coder → Storage workflow"""
     print("📋 Basic Mode Poetry Generation Demo")
     print("=" * 70)
     print("Security Model: Standard JWT + HTTPS (Production Ready)")
@@ -110,7 +110,7 @@ async def demo_basic_poetry_generation():
     
     # Demo 1: Single AI Model Poetry Generation
     print("\n1. Single AI Model Poetry Generation (Basic Mode)")
-    print("   Using: TinyLLama with standard JWT authentication")
+    print("   Using: Qwen 2.5 Coder 7B with standard JWT authentication")
     
     single_result = await coordinator._handle_cross_server_delegation(
         task_type="poem_generation",
@@ -119,7 +119,7 @@ async def demo_basic_poetry_generation():
             "style": "free_verse",
             "security_mode": "basic_jwt_https"
         },
-        target_capability="tinyllama"
+        target_capability="qwen2.5-coder"
     )
     
     if single_result["status"] == "completed":
@@ -138,17 +138,17 @@ async def demo_basic_poetry_generation():
     else:
         print(f"   ❌ Single model generation failed: {single_result['error']}")
     
-    # Demo 2: TinyLLama → Mistral Collaboration Workflow
-    print("\n2. TinyLLama → Mistral → Storage Collaboration Workflow")
+    # Demo 2: Qwen 2.5 Coder 7B → Qwen3 Coder Collaboration Workflow
+    print("\n2. Qwen 2.5 Coder 7B → Qwen3 Coder → Storage Collaboration Workflow")
     print("   📋 Multi-step AI workflow with basic security:")
-    print("   Step 1: TinyLLama generates initial poem (JWT auth)")
-    print("   Step 2: Mistral enhances the poem (JWT auth)")
+    print("   Step 1: Qwen 2.5 Coder 7B generates initial poem (JWT auth)")
+    print("   Step 2: Qwen3 Coder enhances the poem (JWT auth)")
     print("   Step 3: Storage server saves result (JWT auth)")
     print("   🔒 Security: JWT tokens in headers + HTTPS transport")
     
     workflow_steps = [
-        {"capability": "tinyllama", "task_type": "poem_generation"},
-        {"capability": "mistral", "task_type": "enhancement"}, 
+        {"capability": "qwen2.5-coder", "task_type": "poem_generation"},
+        {"capability": "qwen3-coder", "task_type": "enhancement"}, 
         {"capability": "mcp_storage", "task_type": "store"}
     ]
     
@@ -211,7 +211,7 @@ async def demo_basic_poetry_generation():
             "workflow_metadata": {
                 "steps_completed": len(workflow_result['results']),
                 "servers_used": list(servers_used),
-                "collaboration_type": "tinyllama_mistral_storage"
+                "collaboration_type": "qwen2.5-coder_qwen3-coder_storage"
             }
         }
         
@@ -233,13 +233,13 @@ async def demo_basic_poetry_generation():
     print("   Mode: Concurrent execution with basic authentication")
     
     parallel_result = await coordinator._handle_multi_server_collaboration(
-        participants=["tinyllama", "mistral"],
+        participants=["qwen2.5-coder", "qwen3-coder"],
         collaboration_type="parallel",
         data={
             "collaborative_theme": "Digital Transformation and Security Standards",
             "individual_prompts": {
-                "tinyllama": "Write about digital innovation from a technical perspective",
-                "mistral": "Write about digital security from an enterprise perspective"
+                "qwen2.5-coder": "Write about digital innovation from a technical perspective",
+                "qwen3-coder": "Write about digital security from an enterprise perspective"
             },
             "security_mode": "basic_parallel",
             "coordination_style": "independent_then_merge"
@@ -268,8 +268,8 @@ async def demo_basic_poetry_generation():
     print("\n" + "=" * 70)
     print("📊 Basic Mode Poetry Generation Summary")
     print("=" * 70)
-    print("✅ Single AI Model: TinyLLama with JWT authentication")
-    print("✅ Multi-Step Workflow: TinyLLama → Mistral → Storage")
+    print("✅ Single AI Model: Qwen 2.5 Coder 7B with JWT authentication")
+    print("✅ Multi-Step Workflow: Qwen 2.5 Coder 7B → Qwen3 Coder → Storage")
     print("✅ Parallel Generation: Concurrent multi-model execution")
     print("✅ Authentication: JWT Bearer tokens (industry standard)")
     print("✅ Transport Security: HTTPS/TLS encryption")

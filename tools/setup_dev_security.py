@@ -175,13 +175,13 @@ echo "💡 To switch to encrypted mode, edit this script and uncomment the encry
     
     if mode in ['basic', 'both']:
         print("📋 Basic Mode (Standard JWT + HTTPS):")
-        print("   pixi run basic-a2a          # TinyLLama → Mistral workflow")
+        print("   pixi run basic-a2a          # Qwen 2.5 Coder 7B → Qwen3 Coder workflow")
         print("   # Suitable for production with HTTPS")
         print()
     
     if mode in ['encrypted', 'both']:
         print("🔐 Encrypted Mode (ECDH + Full Message Encryption):")
-        print("   pixi run encrypted-a2a       # TinyLLama → Mistral encrypted workflow") 
+        print("   pixi run encrypted-a2a       # Qwen 2.5 Coder 7B → Qwen3 Coder encrypted workflow") 
         print("   # Ideal for dev/test or production hardening")
         print()
     

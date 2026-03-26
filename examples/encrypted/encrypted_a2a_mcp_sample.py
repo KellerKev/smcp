@@ -236,7 +236,7 @@ class EncryptedA2AMCPAgent(DistributedA2AAgent):
         # Route to TinyLLama via encrypted A2A
         encrypted_tinyllama_task = {
             "prompt": encrypted_tinyllama_prompt,
-            "model": "tinyllama:latest",
+            "model": "qwen2.5-coder:7b-instruct-q4_K_M",
             "max_tokens": 350,
             "temperature": 0.8,
             "security_context": {
@@ -259,7 +259,7 @@ class EncryptedA2AMCPAgent(DistributedA2AAgent):
             results["encrypted_tinyllama_analysis"] = {
                 "status": "success",
                 "insights": encrypted_tinyllama_result.get("final_data", {}).get("content", "No encrypted insights generated"),
-                "model": "tinyllama:latest",
+                "model": "qwen2.5-coder:7b-instruct-q4_K_M",
                 "security_level": "encrypted_a2a_transport"
             }
         else:
@@ -296,7 +296,7 @@ class EncryptedA2AMCPAgent(DistributedA2AAgent):
         # Route to Mistral via maximum security A2A
         encrypted_mistral_task = {
             "prompt": encrypted_mistral_prompt,
-            "model": "mistral:7b-instruct-q4_K_M",
+            "model": "qwen3-coder:30b-a3b-q4_K_M",
             "max_tokens": 1000,
             "temperature": 0.7,
             "security_context": {
@@ -322,7 +322,7 @@ class EncryptedA2AMCPAgent(DistributedA2AAgent):
             results["encrypted_mistral_analysis"] = {
                 "status": "success",
                 "recommendations": encrypted_mistral_result.get("final_data", {}).get("content", "No encrypted recommendations generated"),
-                "model": "mistral:7b-instruct-q4_K_M",
+                "model": "qwen3-coder:30b-a3b-q4_K_M",
                 "security_level": "maximum_encryption_pfs"
             }
         else:
@@ -392,7 +392,7 @@ class EncryptedA2AMCPAgent(DistributedA2AAgent):
             },
             "results": results,
             "execution_time": datetime.now().isoformat(),
-            "models_used": ["tinyllama:latest", "mistral:7b-instruct-q4_K_M"],
+            "models_used": ["qwen2.5-coder:7b-instruct-q4_K_M", "qwen3-coder:30b-a3b-q4_K_M"],
             "data_sources": ["encrypted_postgresql_via_mindsdb", "encrypted_mcp_bridge"],
             "security_assurance": "maximum_encryption_zero_trust"
         }
@@ -460,7 +460,7 @@ async def demo_encrypted_a2a_mcp_integration():
             
             model_names = [m.get("name", "") for m in models]
             tinyllama_available = any("tinyllama" in name for name in model_names)
-            mistral_available = any("mistral:7b-instruct-q4_K_M" in name for name in model_names)
+            mistral_available = any("qwen3-coder:30b-a3b-q4_K_M" in name for name in model_names)
             
             print(f"   🤖 TinyLLama: {'✅ Available' if tinyllama_available else '❌ Missing'}")
             print(f"   🔥 Mistral 7B: {'✅ Available' if mistral_available else '❌ Missing'}")

@@ -537,7 +537,7 @@ async def demo_federated_authentication():
         'task_id': 'test_ai_001',
         'type': 'ai_reasoning',
         'prompt': 'Analyze federated authentication benefits',
-        'model': 'mistral'
+        'model': 'qwen3-coder'
     }
     
     result1 = await gpu_server_1.forward_request(task1, "gpu_server_2", client_jwt)

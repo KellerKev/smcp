@@ -3,7 +3,7 @@
 Encrypted Mode Poetry Generation Sample
 =====================================
 Demonstrates secure AI poetry generation using auto-generated ECDH keys and full message encryption.
-Features TinyLLama → Mistral → Storage collaboration with maximum security protection.
+Features Qwen 2.5 Coder 7B → Qwen3 Coder → Storage collaboration with maximum security protection.
 
 Security Model:
 - Auto-generated ephemeral ECDH key pairs
@@ -177,7 +177,7 @@ async def demo_encrypted_poetry_generation():
     
     # Demo 1: Encrypted Single AI Model Poetry Generation
     print("\n1. Encrypted Single AI Model Poetry Generation")
-    print("   Using: TinyLLama with full message encryption + ECDH")
+    print("   Using: Qwen 2.5 Coder 7B with full message encryption + ECDH")
     
     encrypted_single_result = await coordinator._handle_cross_server_delegation(
         task_type="poem_generation",
@@ -187,7 +187,7 @@ async def demo_encrypted_poetry_generation():
             "security_mode": "ecdh_encrypted_max_security",
             "encryption_level": "aes256_gcm_pfs"
         },
-        target_capability="tinyllama"
+        target_capability="qwen2.5-coder"
     )
     
     if encrypted_single_result["status"] == "completed":
@@ -206,17 +206,17 @@ async def demo_encrypted_poetry_generation():
     else:
         print(f"   ❌ Encrypted single model generation failed: {encrypted_single_result['error']}")
     
-    # Demo 2: Encrypted TinyLLama → Mistral → Storage Workflow
-    print("\n2. Encrypted TinyLLama → Mistral → Storage Collaboration Workflow")
+    # Demo 2: Encrypted Qwen 2.5 Coder 7B → Qwen3 Coder → Storage Workflow
+    print("\n2. Encrypted Qwen 2.5 Coder 7B → Qwen3 Coder → Storage Collaboration Workflow")
     print("   🔐 Fully encrypted multi-step AI workflow:")
-    print("   Step 1: TinyLLama generates poem (encrypted JWT + ECDH)")
-    print("   Step 2: Mistral enhances poem (encrypted JWT + ECDH)")
+    print("   Step 1: Qwen 2.5 Coder 7B generates poem (encrypted JWT + ECDH)")
+    print("   Step 2: Qwen3 Coder enhances poem (encrypted JWT + ECDH)")
     print("   Step 3: Storage saves result (encrypted JWT + ECDH)")
     print("   🛡️ Security: All JWT tokens encrypted, never exposed in transit")
     
     encrypted_workflow_steps = [
-        {"capability": "tinyllama", "task_type": "poem_generation"},
-        {"capability": "mistral", "task_type": "enhancement"}, 
+        {"capability": "qwen2.5-coder", "task_type": "poem_generation"},
+        {"capability": "qwen3-coder", "task_type": "enhancement"}, 
         {"capability": "mcp_storage", "task_type": "store"}
     ]
     
@@ -290,7 +290,7 @@ async def demo_encrypted_poetry_generation():
             "workflow_metadata": {
                 "steps_completed": len(encrypted_workflow_result['results']),
                 "encrypted_servers_used": list(servers_used),
-                "collaboration_type": "encrypted_tinyllama_mistral_storage",
+                "collaboration_type": "encrypted_qwen2.5-coder_qwen3-coder_storage",
                 "security_level": "maximum"
             }
         }
@@ -326,8 +326,8 @@ async def demo_encrypted_poetry_generation():
 • Cryptographic integrity verification
 
 🤖 AI MODELS USED:
-• Initial generation: TinyLLama (encrypted communication)
-• Enhancement: Mistral (encrypted communication)
+• Initial generation: Qwen 2.5 Coder 7B (encrypted communication)
+• Enhancement: Qwen3 Coder (encrypted communication)
 • Storage: Secure MCP (encrypted communication)
 
 🔒 ENCRYPTION DETAILS:
@@ -357,13 +357,13 @@ async def demo_encrypted_poetry_generation():
     print("   Mode: Concurrent encrypted execution with maximum security")
     
     encrypted_parallel_result = await coordinator._handle_multi_server_collaboration(
-        participants=["tinyllama", "mistral"],
+        participants=["qwen2.5-coder", "qwen3-coder"],
         collaboration_type="parallel",
         data={
             "collaborative_theme": "Quantum Cryptography and Post-Quantum Security",
             "individual_prompts": {
-                "tinyllama": "Write about quantum encryption from a technical perspective",
-                "mistral": "Write about post-quantum security from an enterprise perspective"
+                "qwen2.5-coder": "Write about quantum encryption from a technical perspective",
+                "qwen3-coder": "Write about post-quantum security from an enterprise perspective"
             },
             "security_mode": "parallel_ecdh_max_encryption",
             "encryption_features": {
@@ -407,8 +407,8 @@ async def demo_encrypted_poetry_generation():
     print("\n" + "=" * 80)
     print("📊 Encrypted Mode Poetry Generation Summary")
     print("=" * 80)
-    print("✅ Single AI Model: TinyLLama with full ECDH encryption")
-    print("✅ Multi-Step Workflow: TinyLLama → Mistral → Storage (all encrypted)")
+    print("✅ Single AI Model: Qwen 2.5 Coder 7B with full ECDH encryption")
+    print("✅ Multi-Step Workflow: Qwen 2.5 Coder 7B → Qwen3 Coder → Storage (all encrypted)")
     print("✅ Parallel Generation: Concurrent encrypted multi-model execution")
     print("✅ Authentication: JWT tokens encrypted inside message payload")
     print("✅ Key Exchange: Auto-generated ephemeral ECDH")

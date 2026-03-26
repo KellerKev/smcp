@@ -201,12 +201,12 @@ async def demo_basic_enterprise_features():
     
     # Demo 2: Enterprise Multi-Model AI Coordination
     print("\n2. Enterprise Multi-Model AI Coordination Workflow")
-    print("   Executing: TinyLLama → Mistral → Storage with enterprise monitoring")
+    print("   Executing: Qwen 2.5 Coder 7B → Qwen3 Coder → Storage with enterprise monitoring")
     
     # Enterprise AI workflow with business context
     enterprise_workflow_steps = [
-        {"capability": "tinyllama", "task_type": "initial_draft", "business_priority": "high"},
-        {"capability": "mistral", "task_type": "executive_review", "business_priority": "high"}, 
+        {"capability": "qwen2.5-coder", "task_type": "initial_draft", "business_priority": "high"},
+        {"capability": "qwen3-coder", "task_type": "executive_review", "business_priority": "high"}, 
         {"capability": "mcp_storage", "task_type": "enterprise_archive", "business_priority": "medium"}
     ]
     
@@ -380,7 +380,7 @@ async def demo_basic_enterprise_features():
     print("📊 Basic Mode Enterprise Features Summary")
     print("=" * 80)
     print("✅ Enterprise Compliance: Multi-stage validation with audit trails")
-    print("✅ Multi-Model Coordination: TinyLLama → Mistral → Storage workflow")
+    print("✅ Multi-Model Coordination: Qwen 2.5 Coder 7B → Qwen3 Coder → Storage workflow")
     print("✅ Business SLA Management: Performance monitoring and reporting")
     print("✅ Standard Authentication: JWT Bearer tokens (RFC 7519 compliant)")
     print("✅ Enterprise Transport: HTTPS/TLS with monitoring integration")

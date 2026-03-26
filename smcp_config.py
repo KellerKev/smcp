@@ -84,7 +84,7 @@ class ClusterConfig:
 class AIConfig:
     """AI integration configuration"""
     ollama_url: str = "http://localhost:11434"
-    default_model: str = "tinyllama:latest"
+    default_model: str = "qwen2.5-coder:7b-instruct-q4_K_M"
     timeout: int = 30
     max_tokens: int = 1000
     # Distributed AI configuration

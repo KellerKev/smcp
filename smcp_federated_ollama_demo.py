@@ -42,7 +42,7 @@ class OllamaFederatedAgent(FederatedSCPNode):
     async def _process_ai_task(self, task: Dict[str, Any], client_payload: Dict[str, Any]) -> Dict[str, Any]:
         """Process AI reasoning task using real Ollama"""
         prompt = task.get('prompt', 'Hello from federated AI!')
-        model = task.get('model', 'tinyllama:latest')
+        model = task.get('model', 'qwen2.5-coder:7b-instruct-q4_K_M')
         
         # Check if model is available
         if model not in self.available_models:
@@ -171,7 +171,7 @@ async def demo_federated_ollama():
     if not creative_node.available_models:
         print("⚠️  Warning: No Ollama models detected. Starting Ollama...")
         print("   Please run: ollama serve")
-        print("   Then: ollama pull tinyllama")
+        print("   Then: ollama pull qwen2.5-coder")
         print("   Continuing with simulation...")
     else:
         print(f"✅ Ollama models available: {creative_node.available_models}")
@@ -184,7 +184,7 @@ async def demo_federated_ollama():
         'task_id': 'federated_creative_001',
         'type': 'ai_reasoning',
         'prompt': 'Write a haiku about federated AI systems working together securely',
-        'model': 'tinyllama:latest'
+        'model': 'qwen2.5-coder:7b-instruct-q4_K_M'
     }
     
     result1 = await creative_node.forward_request(creative_task, "analytical_ai_node", client_jwt)
@@ -205,7 +205,7 @@ async def demo_federated_ollama():
         'task_id': 'federated_chain_001',
         'type': 'ai_reasoning', 
         'prompt': 'Generate a technical summary of distributed authentication benefits',
-        'model': 'tinyllama:latest'
+        'model': 'qwen2.5-coder:7b-instruct-q4_K_M'
     }
     
     creative_result = await creative_node.forward_request(creative_task2, "analytical_ai_node", client_jwt)

@@ -189,7 +189,7 @@ class BasicA2AMCPAgent(DistributedA2AAgent):
         # Route to TinyLLama via A2A
         tinyllama_task = {
             "prompt": tinyllama_prompt,
-            "model": "tinyllama:latest",
+            "model": "qwen2.5-coder:7b-instruct-q4_K_M",
             "max_tokens": 300,
             "temperature": 0.8
         }
@@ -205,7 +205,7 @@ class BasicA2AMCPAgent(DistributedA2AAgent):
             results["tinyllama_analysis"] = {
                 "status": "success",
                 "insights": tinyllama_result.get("final_data", {}).get("content", "No insights generated"),
-                "model": "tinyllama:latest"
+                "model": "qwen2.5-coder:7b-instruct-q4_K_M"
             }
         else:
             print(f"   ❌ TinyLLama analysis failed: {tinyllama_result.get('error')}")
@@ -237,7 +237,7 @@ class BasicA2AMCPAgent(DistributedA2AAgent):
         # Route to Mistral via A2A  
         mistral_task = {
             "prompt": mistral_prompt,
-            "model": "mistral:7b-instruct-q4_K_M", 
+            "model": "qwen3-coder:30b-a3b-q4_K_M", 
             "max_tokens": 800,
             "temperature": 0.7
         }
@@ -253,7 +253,7 @@ class BasicA2AMCPAgent(DistributedA2AAgent):
             results["mistral_analysis"] = {
                 "status": "success", 
                 "recommendations": mistral_result.get("final_data", {}).get("content", "No recommendations generated"),
-                "model": "mistral:7b-instruct-q4_K_M"
+                "model": "qwen3-coder:30b-a3b-q4_K_M"
             }
         else:
             print(f"   ❌ Mistral 7B analysis failed: {mistral_result.get('error')}")
@@ -295,7 +295,7 @@ class BasicA2AMCPAgent(DistributedA2AAgent):
             "security_mode": "basic_jwt_https",
             "results": results,
             "execution_time": datetime.now().isoformat(),
-            "models_used": ["tinyllama:latest", "mistral:7b-instruct-q4_K_M"],
+            "models_used": ["qwen2.5-coder:7b-instruct-q4_K_M", "qwen3-coder:30b-a3b-q4_K_M"],
             "data_sources": ["postgresql_via_mindsdb", "mcp_bridge"]
         }
         

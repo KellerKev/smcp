@@ -471,12 +471,12 @@ def create_demo_agents(config: SMCPConfig) -> List[SMCPAgent]:
         description="Perform AI reasoning using local Ollama",
         parameters={
             "prompt": {"type": "string"},
-            "model": {"type": "string", "default": "tinyllama:latest"},
+            "model": {"type": "string", "default": "qwen2.5-coder:7b-instruct-q4_K_M"},
             "context": {"type": "object", "default": {}}
         }
     )
     
-    def ai_reasoning_handler(prompt: str, model: str = "tinyllama:latest", context: Dict = None) -> Dict[str, Any]:
+    def ai_reasoning_handler(prompt: str, model: str = "qwen2.5-coder:7b-instruct-q4_K_M", context: Dict = None) -> Dict[str, Any]:
         import requests
         try:
             # Combine context with prompt if provided

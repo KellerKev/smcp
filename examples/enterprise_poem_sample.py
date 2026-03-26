@@ -130,12 +130,12 @@ class EnterprisePoetryAgent(DistributedA2AAgent):
         # Define enterprise workflow with enhanced security
         workflow_steps = [
             {
-                "capability": "tinyllama",
+                "capability": "qwen2.5-coder",
                 "task_type": "poem_generation",
                 "security_context": {"level": security_level, "encryption": True}
             },
             {
-                "capability": "mistral", 
+                "capability": "qwen3-coder", 
                 "task_type": "enhancement",
                 "security_context": {"level": security_level, "encryption": True}
             },
@@ -225,7 +225,7 @@ class EnterprisePoetryAgent(DistributedA2AAgent):
         except Exception as e:
             print(f"   ❌ Ollama poem generation failed: {e}")
             print("   💡 Make sure Ollama is running: ollama serve")  
-            print("   💡 Install required model: ollama pull tinyllama:latest")
+            print("   💡 Install required model: ollama pull qwen2.5-coder:7b-instruct-q4_K_M")
             return {
                 "status": "failed",
                 "error": f"Ollama poem generation failed - demo requires working Ollama server: {e}",
@@ -354,7 +354,7 @@ class EnterprisePoetryAgent(DistributedA2AAgent):
         results = workflow_result.get("results", {})
         
         # Look for enhancement result first, then initial generation
-        for step_id in ["step_2", "step_1"]:  # Mistral enhancement, then TinyLLama
+        for step_id in ["step_2", "step_1"]:  # Qwen3 Coder enhancement, then Qwen 2.5 Coder 7B
             if step_id in results:
                 result_data = results[step_id].get("result", {})
                 
