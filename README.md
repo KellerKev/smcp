@@ -3,11 +3,11 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 🎬 Demo
+## 🎬 Live Demo
 
-![SMCP Demo](smcp_demo.gif)
+![SMCP Multi-Agent Coordination Demo](smcp_full_demo.gif)
 
-*See SMCP in action: Multi-agent coordination with security layers in under 15 seconds!*
+*Watch SMCP coordinate multiple AI agents to generate a security report in real-time! See the complete workflow: agent registration, security setup, parallel task execution, and results aggregation.*
 
 ## 🚀 Overview
 
