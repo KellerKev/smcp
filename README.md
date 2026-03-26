@@ -3,6 +3,12 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+## 🎬 Demo
+
+![SMCP Demo](smcp_demo.gif)
+
+*See SMCP in action: Multi-agent coordination with security layers in under 15 seconds!*
+
 ## 🚀 Overview
 
 SMCP (Secure Model Context Protocol) is a proof-of-concept that demonstrates how the Model Context Protocol (MCP) can be extended with security features and multi-agent coordination capabilities. This project explores potential improvements to MCP for scenarios requiring authentication, encryption, and agent-to-agent communication.
