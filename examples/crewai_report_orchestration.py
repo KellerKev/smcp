@@ -348,6 +348,15 @@ class LocalAIAgent(SMCPAgent):
     async def _handle_business_analysis(self, analysis_request: str = None, **kwargs) -> dict:
         """Handle business analysis requests"""
         try:
+            # Extract analysis request from various parameter formats
+            if not analysis_request:
+                analysis_request = (
+                    kwargs.get("analysis_request") or
+                    kwargs.get("task_data", {}).get("analysis_request") or
+                    kwargs.get("content") or
+                    "General business analysis"
+                )
+            
             # Use Ollama to generate business analysis
             import aiohttp
             
@@ -393,7 +402,14 @@ class LocalAIAgent(SMCPAgent):
         try:
             import aiohttp
             
-            content_request = theme or analysis_request or kwargs.get("content", "creative writing")
+            # Extract content request from various parameter formats
+            content_request = (
+                theme or analysis_request or 
+                kwargs.get("analysis_request") or
+                kwargs.get("task_data", {}).get("analysis_request") or
+                kwargs.get("content") or 
+                "creative writing"
+            )
             
             prompt = f"""
             Generate creative content based on: {content_request}
@@ -430,7 +446,15 @@ class LocalAIAgent(SMCPAgent):
         try:
             import aiohttp
             
-            base_content = content or kwargs.get("generated_content", "")
+            # Extract content from various parameter formats
+            base_content = (
+                content or 
+                kwargs.get("generated_content") or
+                kwargs.get("analysis_request") or
+                kwargs.get("task_data", {}).get("analysis_request") or
+                kwargs.get("content") or
+                ""
+            )
             
             prompt = f"""
             Enhance and improve the following content:
@@ -637,11 +661,9 @@ class CrewAISMCPOrchestrator:
                 COUNT(DISTINCT c.customer_id) as total_customers,
                 COUNT(DISTINCT o.order_id) as total_orders, 
                 SUM(o.total_amount) as total_revenue,
-                AVG(o.total_amount) as avg_order_value,
-                AVG(r.rating) as avg_rating
+                AVG(o.total_amount) as avg_order_value
             FROM ecommerce_customers c
             JOIN ecommerce_orders o ON c.customer_id = o.customer_id
-            LEFT JOIN ecommerce_reviews r ON o.order_id = r.order_id
             GROUP BY c.city
             ORDER BY total_revenue DESC
             LIMIT 10

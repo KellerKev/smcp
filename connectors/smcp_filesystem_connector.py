@@ -310,8 +310,26 @@ class FilesystemConnector(SMCPConnectorBase):
         if file_format == "auto":
             file_format = full_path.suffix.lower() or ".txt"
         
+        # Map common format names to extensions
+        format_mapping = {
+            "markdown": ".md",
+            "text": ".txt", 
+            "plain": ".txt",
+            "json": ".json",
+            "html": ".html",
+            "csv": ".csv",
+            "yaml": ".yml",
+            "yml": ".yml"
+        }
+        
+        # Apply format mapping if needed
+        if file_format in format_mapping:
+            file_format = format_mapping[file_format]
+        elif not file_format.startswith("."):
+            file_format = f".{file_format}"
+        
         # Validate file extension
-        if file_format not in self.allowed_extensions and f".{file_format}" not in self.allowed_extensions:
+        if file_format not in self.allowed_extensions:
             raise Exception(f"File format not allowed: {file_format}")
         
         # Create parent directories
