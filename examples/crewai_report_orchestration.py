@@ -70,7 +70,7 @@ class DuckDBQuerySchema(BaseModel):
 class A2AAnalysisSchema(BaseModel):
     """Schema for A2A analysis tool arguments"""
     analysis_request: str = Field(..., description="Analysis request to send to AI models")
-    model_preference: Optional[str] = Field("mistral", description="Preferred AI model (mistral, tinyllama, or both)")
+    model_preference: Optional[str] = Field("qwen3", description="Preferred AI model (qwen3, creative, or both)")
 
 class FilesystemWriteSchema(BaseModel):
     """Schema for filesystem write tool arguments"""
@@ -170,7 +170,7 @@ class SMCPA2ATool(BaseTool):
         super().__init__()
         self._a2a_agent = a2a_agent
     
-    def _run(self, analysis_request: str = "", model_preference: str = "mistral", **kwargs) -> str:
+    def _run(self, analysis_request: str = "", model_preference: str = "qwen3", **kwargs) -> str:
         """Execute A2A analysis synchronously"""
         try:
             # Try to use existing event loop if available
@@ -208,16 +208,16 @@ class SMCPA2ATool(BaseTool):
                     "error": "No analysis request provided"
                 })
             
-            # Create A2A workflow based on model preference
-            if model_preference == "mistral":
-                workflow_steps = [{"capability": "mistral", "task_type": "business_analysis"}]
-            elif model_preference == "tinyllama":
+            # Create A2A workflow based on model preference  
+            if model_preference == "qwen3" or model_preference == "mistral":
+                workflow_steps = [{"capability": "qwen3", "task_type": "business_analysis"}]
+            elif model_preference == "creative":
                 workflow_steps = [{"capability": "tinyllama", "task_type": "creative_generation"}]
             else:
                 # Use both models for comprehensive analysis
                 workflow_steps = [
                     {"capability": "tinyllama", "task_type": "initial_analysis"},
-                    {"capability": "mistral", "task_type": "enhancement"}
+                    {"capability": "qwen3", "task_type": "enhancement"}
                 ]
             
             result = await self._a2a_agent._handle_distributed_workflow(
@@ -561,29 +561,29 @@ class CrewAISMCPOrchestrator:
         """Register local AI agents for A2A capabilities"""
         print("   🧠 Registering AI agents for A2A capabilities...")
         
-        # Create TinyLLama agent
+        # Create Qwen3 14B creative agent (replacing TinyLLama)
         tinyllama_info = AgentInfo(
-            agent_id="local_tinyllama",
-            name="Local TinyLLama Agent", 
-            description="Fast creative text generation using TinyLLama",
-            specialties=["tinyllama", "creative_writing", "initial_analysis"],
+            agent_id="local_qwen14b",
+            name="Local Qwen3 14B Agent", 
+            description="Fast creative text generation and analysis using Qwen3 14B",
+            specialties=["tinyllama", "creative_writing", "initial_analysis", "qwen3"],
             capabilities=["poem_generation", "creative_generation", "business_analysis"]
         )
         
-        tinyllama_agent = LocalAIAgent(self.a2a_agent.config, tinyllama_info, "tinyllama:latest")
-        cluster_registry.register_local_agent(tinyllama_agent)
+        qwen_creative_agent = LocalAIAgent(self.a2a_agent.config, tinyllama_info, "qwen3:14b-q4_K_M")
+        cluster_registry.register_local_agent(qwen_creative_agent)
         
-        # Create Mistral agent  
-        mistral_info = AgentInfo(
-            agent_id="local_mistral",
-            name="Local Mistral Agent",
-            description="Advanced analysis and enhancement using Mistral", 
-            specialties=["mistral", "enhancement", "analysis"],
-            capabilities=["enhancement", "business_analysis", "strategic_analysis"]
+        # Create Qwen3 30B agent for advanced analysis
+        qwen30b_info = AgentInfo(
+            agent_id="local_qwen30b",
+            name="Local Qwen3 30B Agent",
+            description="Advanced analysis and strategic insights using Qwen3 30B", 
+            specialties=["qwen3", "enhancement", "analysis", "strategic_planning"],
+            capabilities=["enhancement", "business_analysis", "strategic_analysis", "complex_reasoning"]
         )
         
-        mistral_agent = LocalAIAgent(self.a2a_agent.config, mistral_info, "mistral:7b-instruct-q4_K_M")
-        cluster_registry.register_local_agent(mistral_agent)
+        qwen30b_agent = LocalAIAgent(self.a2a_agent.config, qwen30b_info, "qwen3:30b-instruct")
+        cluster_registry.register_local_agent(qwen30b_agent)
         
         print(f"   ✓ Registered {len(cluster_registry.local_agents)} AI agents")
     
@@ -596,9 +596,9 @@ class CrewAISMCPOrchestrator:
         a2a_tool = SMCPA2ATool(self.a2a_agent)
         filesystem_tool = SMCPFilesystemTool(self.filesystem_connector)
         
-        # Configure Ollama LLM for CrewAI
+        # Configure Ollama LLM for CrewAI - using more powerful model
         ollama_llm = LLM(
-            model="ollama/mistral:7b-instruct-q4_K_M",
+            model="ollama/qwen3:14b-q4_K_M",
             base_url="http://localhost:11434"
         )
         
@@ -734,7 +734,7 @@ class CrewAISMCPOrchestrator:
             Use the tool smcp_a2a_analysis with these exact parameters:
             
             analysis_request: "Analyze the {business_domain} performance data and provide strategic recommendations for {focus_area}. Focus on growth opportunities, risk mitigation, and operational improvements."
-            model_preference: "mistral"
+            model_preference: "qwen3"
             
             Provide:
             1. Strategic interpretation of the data patterns
@@ -870,7 +870,7 @@ class CrewAISMCPOrchestrator:
             "business_domain": business_domain,
             "agents_used": 4,
             "smcp_connectors": ["duckdb", "filesystem", "a2a"],
-            "ai_models": ["tinyllama", "mistral"],
+            "ai_models": ["qwen3-14b", "qwen3-30b"],
             "reports_generated": True,
             "final_result": str(result)
         }
