@@ -11,12 +11,66 @@ The CrewAI + SMCP integration demonstrates advanced multi-agent orchestration us
 │   CrewAI            │    │   SMCP A2A Network  │    │   SMCP Connectors   │
 │   Orchestration     │◄──►│   Coordination      │◄──►│   Data & Storage    │
 │                     │    │                     │    │                     │
-│ • Data Analyst      │    │ • TinyLLama Agent   │    │ • DuckDB Connector  │
-│ • Business Analyst  │    │ • Mistral Agent     │    │ • Filesystem        │
+│ • Data Analyst      │    │ • Qwen3 14B Agent   │    │ • DuckDB Connector  │
+│ • Business Analyst  │    │ • Qwen3 30B Agent   │    │ • Filesystem        │
 │ • Report Writer     │    │ • A2A Routing       │    │ • Report Storage    │
 │ • Quality Reviewer  │    │ • Security Layer    │    │ • Audit Trail       │
 └─────────────────────┘    └─────────────────────┘    └─────────────────────┘
 ```
+
+## 🎯 Critical Architecture Clarification: Everything Runs Through YOUR SMCP Stack
+
+**IMPORTANT**: CrewAI is ONLY the orchestrator - ALL actual execution happens through YOUR SMCP/A2A infrastructure!
+
+### What CrewAI Does vs What Your SMCP Stack Does:
+
+**CrewAI's LIMITED Role (Orchestration Only):**
+- ✅ Decides task order and dependencies
+- ✅ Manages which agent does what task
+- ✅ Coordinates workflow progression
+- ❌ CANNOT directly access your database
+- ❌ CANNOT directly call AI models
+- ❌ CANNOT directly write to filesystem
+
+**YOUR SMCP Stack Does EVERYTHING Else:**
+- ✅ **ALL Database Queries** - via YOUR SMCP DuckDB connector
+- ✅ **ALL AI Model Calls** - via YOUR SMCP A2A agents calling YOUR local Ollama
+- ✅ **ALL File Operations** - via YOUR SMCP filesystem connector
+- ✅ **ALL Security** - YOUR JWT/encryption layers
+- ✅ **ALL Agent Coordination** - YOUR A2A routing and load balancing
+- ✅ **ALL Infrastructure Access** - 100% through YOUR SMCP layer
+
+### The Data Flow Proof:
+
+```python
+# 1. When CrewAI "uses a tool", it's calling YOUR SMCP wrapper:
+Action: smcp_duckdb_query
+  → Calls YOUR SMCPDuckDBTool._run()
+    → Which calls YOUR duckdb_connector.execute_query()
+      → Which queries YOUR local DuckDB
+
+# 2. When CrewAI needs AI analysis:
+Action: smcp_a2a_analysis  
+  → Calls YOUR SMCPA2ATool._run()
+    → Which calls YOUR a2a_agent._handle_distributed_workflow()
+      → Which routes to YOUR LocalAIAgent
+        → Which calls YOUR local Ollama (not CrewAI's)
+
+# 3. When CrewAI saves reports:
+Action: smcp_filesystem_write
+  → Calls YOUR SMCPFilesystemTool._run()
+    → Which calls YOUR filesystem_connector.write_file()
+      → Which writes to YOUR local filesystem
+```
+
+### Security Implications:
+
+This architecture means:
+- 🔒 **Complete Control**: You control ALL data access
+- 🔒 **Security Enforcement**: Your SMCP security layers protect everything
+- 🔒 **Audit Trail**: Every operation is logged through YOUR stack
+- 🔒 **No Direct Access**: CrewAI cannot bypass YOUR security
+- 🔒 **Local Execution**: Everything runs on YOUR infrastructure
 
 ## Key Features
 
@@ -33,8 +87,8 @@ The CrewAI + SMCP integration demonstrates advanced multi-agent orchestration us
 - **Performance Optimization**: Connection pooling and efficient data access
 
 ### 🤖 **AI Model Integration**
-- **TinyLLama**: Fast creative generation and initial analysis
-- **Mistral 7B**: Advanced business intelligence and strategic analysis
+- **Qwen3 14B**: Fast business analysis and creative generation
+- **Qwen3 30B**: Advanced strategic analysis and enhancement
 - **Distributed Routing**: Optimal model selection based on task requirements
 - **Secure Communication**: All AI interactions encrypted via SMCP A2A
 
