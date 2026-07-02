@@ -84,12 +84,12 @@ class EnhancedSMCPSecurity:
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=b'scp_salt_2024',
-            iterations=100000,
+            salt=(getattr(self.config, "kdf_salt", "") or "").encode() + b'scp_salt_2024',
+            iterations=600_000,
         )
         key = base64.urlsafe_b64encode(kdf.derive(self.config.secret_key.encode()))
         self.cipher = Fernet(key)
-    
+
     def _init_basic_auth(self):
         """Initialize basic JWT authentication (standard production mode)"""
         self.jwt_secret = self.config.jwt_secret
@@ -109,8 +109,8 @@ class EnhancedSMCPSecurity:
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=b'scp_encrypted_salt_2024',
-            iterations=100000,
+            salt=(getattr(self.config, "kdf_salt", "") or "").encode() + b'scp_encrypted_salt_2024',
+            iterations=600_000,
         )
         key = base64.urlsafe_b64encode(kdf.derive(self.config.secret_key.encode()))
         self.cipher = Fernet(key)
@@ -457,7 +457,7 @@ class EnhancedSMCPSecurity:
             algorithm=hashes.SHA256(),
             length=32,
             salt=b'scp_session_2024',
-            iterations=100000,
+            iterations=600_000,
         )
         return kdf.derive(shared_secret)
     
