@@ -22,9 +22,10 @@ class SMCPServer:
     def __init__(self, config: SMCPConfig = None):
         self.config = config or SMCPConfig(node_id="scp_server")
         self.node = SMCPNode(
-            self.config.node_id, 
-            self.config.secret_key, 
-            self.config.jwt_secret
+            self.config.node_id,
+            self.config.secret_key,
+            self.config.jwt_secret,
+            getattr(self.config, "kdf_salt", "")
         )
         self.connections = {}
         self.running = False

@@ -120,6 +120,7 @@ class SMCPConfig:
     api_key: str = "demo_key_123"
     secret_key: str = "default_secret_key"
     jwt_secret: str = "default_jwt_secret"
+    kdf_salt: str = ""  # v3 per-deployment KDF salt (must match the server)
     
     # Enterprise features (optional, backward compatible)
     mode: str = "simple"  # "simple", "enterprise", "development"
@@ -212,6 +213,7 @@ class SMCPConfig:
         config.api_key = os.getenv('SCP_API_KEY', config.api_key)
         config.secret_key = os.getenv('SCP_SECRET_KEY', config.secret_key)
         config.jwt_secret = os.getenv('SCP_JWT_SECRET', config.jwt_secret)
+        config.kdf_salt = os.getenv('SCP_KDF_SALT', config.kdf_salt)
         config.mode = os.getenv('SCP_MODE', config.mode)
         
         # Server settings
@@ -322,7 +324,7 @@ class SMCPConfig:
         merged = cls()
         
         # Copy all fields from base
-        for field_name in ['node_id', 'server_url', 'api_key', 'secret_key', 'jwt_secret']:
+        for field_name in ['node_id', 'server_url', 'api_key', 'secret_key', 'jwt_secret', 'kdf_salt']:
             setattr(merged, field_name, getattr(base, field_name))
         
         # Copy nested configurations
@@ -383,6 +385,7 @@ class SMCPConfig:
             'api_key': self.api_key,
             'secret_key': self.secret_key,
             'jwt_secret': self.jwt_secret,
+            'kdf_salt': self.kdf_salt,
             'server': clean_dict(self.server.__dict__),
             'client': clean_dict(self.client.__dict__),
             'ai': clean_dict(self.ai.__dict__),

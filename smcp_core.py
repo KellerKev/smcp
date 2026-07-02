@@ -16,6 +16,7 @@ from enum import Enum
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 import base64
 import jwt
 from datetime import datetime, timedelta
@@ -75,37 +76,48 @@ class Capability:
 class SMCPSecurity:
     """Handles encryption and authentication"""
     
-    def __init__(self, secret_key: str, jwt_secret: str):
+    def __init__(self, secret_key: str, jwt_secret: str, kdf_salt: str = ""):
         self.secret_key = secret_key.encode()
         self.jwt_secret = jwt_secret
-        self._setup_encryption()
-    
-    def _setup_encryption(self):
-        """Setup AES encryption"""
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=b'scp_salt_2024',
-            iterations=100000,
-        )
-        key = base64.urlsafe_b64encode(kdf.derive(self.secret_key))
-        self.cipher = Fernet(key)
-    
+        self.kdf_salt = kdf_salt
+        self._setup_keys()
+
+    def _setup_keys(self):
+        """v3 key derivation (matches malgra-tunnel/src/protocol.rs + docs/SMCP_PROTOCOL.md):
+        master = PBKDF2-HMAC-SHA256(secret, kdf_salt, 600k) -> HKDF splits an independent Fernet
+        cipher key and an HMAC key. The raw secret is never used as a key (v2's flaw)."""
+        salt = self.kdf_salt.encode() if self.kdf_salt else b"malgra-tunnel-v3"
+        master = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=600_000).derive(self.secret_key)
+        cipher_key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"malgra-tunnel-v3-cipher").derive(master)
+        self.mac_key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"malgra-tunnel-v3-mac").derive(master)
+        self.cipher = Fernet(base64.urlsafe_b64encode(cipher_key))
+
     def encrypt_payload(self, payload: Dict[str, Any]) -> str:
         """Encrypt message payload"""
         json_payload = json.dumps(payload).encode()
         return self.cipher.encrypt(json_payload).decode()
-    
+
     def decrypt_payload(self, encrypted_payload: str) -> Dict[str, Any]:
         """Decrypt message payload"""
         decrypted = self.cipher.decrypt(encrypted_payload.encode())
         return json.loads(decrypted.decode())
-    
+
+    @staticmethod
+    def _canonical(payload) -> str:
+        """Canonical JSON of the wire payload: sorted keys, compact separators (matches serde_json)."""
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
+    def _ts_str(ts) -> str:
+        """Integer seconds render as '<n>.0' to match the Rust f64 serialization."""
+        f = float(ts)
+        return f"{int(f)}.0" if f.is_integer() else str(f)
+
     def sign_message(self, message: SMCPMessage) -> str:
-        """Create HMAC signature"""
-        msg_data = f"{message.id}{message.type.value}{message.timestamp}"
+        """v3 payload-bound HMAC signature over id + type + ts + canonical(payload), keyed by mac_key."""
+        msg_data = f"{message.id}{message.type.value}{self._ts_str(message.timestamp)}{self._canonical(message.payload)}"
         return hmac.new(
-            self.secret_key,
+            self.mac_key,
             msg_data.encode(),
             hashlib.sha256
         ).hexdigest()
@@ -138,9 +150,9 @@ class SMCPSecurity:
 class SMCPNode:
     """Core SCP node that can act as client or server"""
     
-    def __init__(self, node_id: str, secret_key: str = "default_secret", jwt_secret: str = "default_jwt"):
+    def __init__(self, node_id: str, secret_key: str = "default_secret", jwt_secret: str = "default_jwt", kdf_salt: str = ""):
         self.node_id = node_id
-        self.security = SMCPSecurity(secret_key, jwt_secret)
+        self.security = SMCPSecurity(secret_key, jwt_secret, kdf_salt)
         self.capabilities: Dict[str, Capability] = {}
         self.tool_handlers: Dict[str, Callable] = {}
         self.auth_tokens: Dict[str, Dict[str, Any]] = {}
@@ -155,7 +167,7 @@ class SMCPNode:
         message = SMCPMessage(
             id=str(uuid.uuid4()),
             type=msg_type,
-            timestamp=time.time(),
+            timestamp=float(int(time.time())),  # integer seconds so the signed ts renders as "<n>.0"
             payload=payload,
             encrypted=encrypt
         )
@@ -191,12 +203,14 @@ class SMCPNode:
         return self.create_error_response(message.id, "Unknown message type")
     
     def _handle_handshake(self, message: SMCPMessage) -> SMCPMessage:
-        """Handle handshake"""
+        """Handle handshake. Mutual auth: echo the client's nonce so it can confirm we hold the
+        shared secret and are answering THIS handshake (not a replay)."""
         return self.create_message(MessageType.HANDSHAKE, {
             "node_id": self.node_id,
-            "protocol_version": "1.0",
+            "protocol_version": "3.0",
             "capabilities_count": len(self.capabilities),
-            "encryption_enabled": True
+            "encryption_enabled": True,
+            "client_nonce": (message.payload or {}).get("nonce", "")
         })
     
     def _handle_auth(self, message: SMCPMessage) -> SMCPMessage:

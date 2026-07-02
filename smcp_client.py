@@ -20,7 +20,8 @@ class SMCPClient:
     
     def __init__(self, config: SMCPConfig = None):
         self.config = config or SMCPConfig()
-        self.node = SMCPNode(self.config.node_id, self.config.secret_key, self.config.jwt_secret)
+        self.node = SMCPNode(self.config.node_id, self.config.secret_key, self.config.jwt_secret,
+                             getattr(self.config, "kdf_salt", ""))
         self.websocket = None
         self.auth_token = None
         self.capabilities = {}
@@ -54,16 +55,26 @@ class SMCPClient:
         print("✓ Disconnected from SCP server")
     
     async def _handshake(self):
-        """Perform handshake"""
+        """Perform handshake with mutual auth: send a fresh nonce the server must echo in a signed
+        response (server->client authentication)."""
+        import secrets as _secrets
+        nonce = _secrets.token_hex(16)
         message = self.node.create_message(MessageType.HANDSHAKE, {
             "client_id": self.config.node_id,
-            "protocol_version": "1.0"
+            "protocol_version": "3.0",
+            "nonce": nonce
         }, encrypt=False)
-        
+
+        # _send_message already verified the server's signature.
         response = await self._send_message(message)
         if response["type"] != "handshake":
             raise Exception("Handshake failed")
-        
+        payload = response.get("payload", {})
+        if response.get("encrypted") and "encrypted_data" in payload:
+            payload = self.node.security.decrypt_payload(payload["encrypted_data"])
+        if (payload or {}).get("client_nonce") != nonce:
+            raise Exception("Handshake failed: server did not echo our nonce (possible MITM/replay)")
+
         print(f"✓ Handshake complete")
     
     async def _authenticate(self):
@@ -128,10 +139,14 @@ class SMCPClient:
         return decrypted.get("result")
     
     async def _send_message(self, message: SMCPMessage) -> Dict[str, Any]:
-        """Send message and get response"""
+        """Send message and get response. Mutual auth: verify the server's payload-bound signature
+        on every reply (rejects unsigned/forged responses)."""
         await self.websocket.send(json.dumps(message.to_dict()))
         response_data = await self.websocket.recv()
-        return json.loads(response_data)
+        response = json.loads(response_data)
+        if not self.node.security.verify_signature(SMCPMessage.from_dict(response)):
+            raise Exception("server message signature invalid (mutual auth failed)")
+        return response
     
     def list_capabilities(self) -> Dict[str, Any]:
         """List available capabilities"""
