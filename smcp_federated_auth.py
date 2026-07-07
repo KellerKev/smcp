@@ -401,11 +401,18 @@ class FederatedSCPNode:
             }
     
     def _extract_user_from_jwt(self, jwt_token: str) -> str:
-        """Extract user ID from JWT token"""
+        """Extract the user id from a client JWT, verifying its signature first.
+
+        Only authenticated identities are surfaced (e.g. into forwarding
+        metadata and audit logs). An unsigned, forged, or expired token yields
+        'unknown' rather than trusting attacker-controlled claims — decoding
+        with verify_signature disabled would let anyone spoof the logged
+        client identity.
+        """
         try:
-            payload = jwt.decode(jwt_token, options={"verify_signature": False})
+            payload = self.auth_manager.validate_client_jwt(jwt_token)
             return payload.get('user', 'unknown')
-        except:
+        except Exception:
             return 'unknown'
     
     async def _simulate_forwarded_request(self, encrypted_request: Dict[str, Any], target_node: str) -> Dict[str, Any]:

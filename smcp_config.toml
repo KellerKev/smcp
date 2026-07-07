@@ -1,8 +1,12 @@
 node_id = "scp_node"
 server_url = "ws://localhost:8765"
 api_key = "demo_key_123"
-secret_key = "default_secret_key"
-jwt_secret = "default_jwt_secret"
+# REQUIRED: set strong, per-deployment secrets — do not ship these blank.
+# Generate e.g. with:  python -c "import secrets; print(secrets.token_urlsafe(32))"
+# Leaving them empty (or at the old "default_*" values) makes validate() refuse
+# to start: the channel keys would be derivable and auth JWTs forgeable.
+secret_key = ""
+jwt_secret = ""
 
 [server]
 host = "localhost"

@@ -118,8 +118,12 @@ class SMCPConfig:
     node_id: str = "scp_node"
     server_url: str = "ws://localhost:8765"
     api_key: str = "demo_key_123"
-    secret_key: str = "default_secret_key"
-    jwt_secret: str = "default_jwt_secret"
+    # No built-in secrets: the previous "default_secret_key"/"default_jwt_secret"
+    # constants were publicly known, so any unconfigured deployment could have
+    # its channel keys derived and its auth JWTs forged. These must be set
+    # per-deployment (SCP_SECRET_KEY / SCP_JWT_SECRET); validate() enforces it.
+    secret_key: str = ""
+    jwt_secret: str = ""
     kdf_salt: str = ""  # v3 per-deployment KDF salt (must match the server)
     
     # Enterprise features (optional, backward compatible)
@@ -434,11 +438,24 @@ class SMCPConfig:
         if not self.api_key:
             issues.append("api_key cannot be empty")
         
-        if not self.secret_key:
-            issues.append("secret_key cannot be empty")
-        
-        if not self.jwt_secret:
-            issues.append("jwt_secret cannot be empty")
+        # Reject empty AND the historically-shipped default values. Those
+        # constants were published in this repo, so a deployment using them
+        # has a publicly-known channel secret (keys derivable from it) and a
+        # publicly-known JWT signing key (auth tokens forgeable by anyone).
+        _INSECURE_SECRET_DEFAULTS = {"", "default_secret_key"}
+        _INSECURE_JWT_DEFAULTS = {"", "default_jwt_secret"}
+        if self.secret_key in _INSECURE_SECRET_DEFAULTS:
+            issues.append(
+                "secret_key must be set to a strong per-deployment value "
+                "(SCP_SECRET_KEY); the built-in default is publicly known and "
+                "lets anyone derive the channel encryption/MAC keys"
+            )
+        if self.jwt_secret in _INSECURE_JWT_DEFAULTS:
+            issues.append(
+                "jwt_secret must be set to a strong per-deployment value "
+                "(SCP_JWT_SECRET); the built-in default is publicly known and "
+                "lets anyone forge authentication tokens"
+            )
         
         if self.server.port < 1 or self.server.port > 65535:
             issues.append(f"server.port must be between 1-65535, got {self.server.port}")
@@ -452,11 +469,28 @@ class SMCPConfig:
         return issues
 
 
+# Backward/forward-compatible alias: much of the codebase (and external
+# callers) refer to this class as ``SCPConfig``; the canonical name is
+# ``SMCPConfig``. Keep both importable so those references resolve.
+SCPConfig = SMCPConfig
+
+
 def create_default_config(config_path: str = "scp_config.toml"):
-    """Create a default configuration file"""
+    """Create a default configuration file.
+
+    Fresh, strong secrets are generated so the created config is secure and
+    runnable out of the box. For a multi-node/federated deployment, copy the
+    same secret_key and jwt_secret to every participant.
+    """
+    import secrets as _secrets
+
     config = SCPConfig()
+    config.secret_key = _secrets.token_urlsafe(32)
+    config.jwt_secret = _secrets.token_urlsafe(32)
     config.to_file(config_path, format='toml')
     print(f"✓ Created default configuration: {config_path}")
+    print("  Generated fresh secret_key and jwt_secret; share them across nodes "
+          "for federation.")
 
 
 def get_common_args() -> argparse.ArgumentParser:
