@@ -1,7 +1,11 @@
-# SMCP - Secure Model Context Protocol
+# SMCP — Secure Model Context Protocol
+
+> **[MCP](https://modelcontextprotocol.io/) with authentication, per-message encryption, and
+> multi-agent (A2A) coordination — so MCP tools run safely over a network and between agents.**
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![MCP-compatible](https://img.shields.io/badge/MCP-compatible-6E56CF.svg)](https://modelcontextprotocol.io/)
 
 ## 🎬 Demo: Multi-Agent Business Intelligence in Action
 
@@ -9,26 +13,26 @@
 
 *Watch SMCP orchestrate multiple AI agents to generate real business intelligence reports! This demo shows CrewAI + SMCP working together to analyze e-commerce, SaaS, and IoT data using Qwen3 models, DuckDB, and secure multi-agent coordination.*
 
-## 🚀 Overview
+## 🚀 What SMCP is
 
-SMCP (Secure Model Context Protocol) is a proof-of-concept that demonstrates how the Model Context Protocol (MCP) can be extended with security features and multi-agent coordination capabilities. This project explores potential improvements to MCP for scenarios requiring authentication, encryption, and agent-to-agent communication.
+[MCP](https://modelcontextprotocol.io/) is a great way to give an AI model tools, but it's built for
+a **local, trusted transport** (stdio on a single machine). **SMCP keeps MCP's tool model exactly
+as-is and wraps it in a security + coordination layer**, so the same tools work *across machines* and
+*between agents*:
 
-### The Challenge
+- 🔒 **Authentication** — `api_key` → JWT sessions (with OAuth2 and audit-trail options)
+- 🔐 **Encryption** — per-message payload encryption (ECDH key exchange + AES-256)
+- 🤝 **Multi-agent (A2A)** — agent-to-agent discovery and orchestration, sequential or parallel
+- 🔌 **Connectors** — native DuckDB and filesystem integrations to build tools against
+- ✅ **MCP-compatible** — the security layer is opt-in; standard MCP tools keep working
 
-While MCP provides an excellent foundation for AI-model interactions, certain use cases may benefit from:
-- 🔒 **Security**: Authentication and encryption capabilities
-- 🤝 **Multi-Agent Coordination**: Agent-to-agent communication patterns
-- 🔧 **Flexible Configuration**: Additional deployment options
-- 📊 **Extended Features**: Audit trails and compliance considerations
+Pick the posture that fits — from a simple API key for local testing up to JWT + AES-256 with an
+audit trail (see [Security modes](#-security-modes) below).
 
-### What This Project Demonstrates
-
-SMCP is a technical exploration that shows how MCP could be enhanced with:
-- **Multiple Security Approaches**: From simple API keys to JWT and encryption experiments
-- **A2A Coordination Concepts**: Multi-agent orchestration patterns
-- **Native Connectors**: DuckDB and filesystem integration examples
-- **Security Experiments**: JWT/OAuth2, ECDH key exchange, and AES encryption
-- **MCP Compatibility**: Maintains compatibility while adding optional security layers
+> SMCP is a working proof-of-concept: the demos below run end to end. It explores how MCP can be
+> hardened for networked, multi-agent use — the same ideas are used in the
+> [RIXI](https://github.com/KellerKev/rixi) agent (`agent/smcp.py`) to share tools securely between
+> agents over an untrusted link.
 
 ## 📚 Documentation
 
@@ -45,12 +49,14 @@ SMCP is a technical exploration that shows how MCP could be enhanced with:
 
 ## ✨ Key Features
 
-### 🔐 Security Mode Experiments
+### 🔐 Security modes
 
-- **Simple Mode**: Basic API key authentication for testing
-- **Basic Mode**: JWT + HTTPS/TLS exploration
-- **Encrypted Mode**: ECDH + AES-256 encryption proof-of-concept
-- **Enterprise Mode**: OAuth2 + audit trail concepts
+Choose per deployment — the same tools, a stronger posture as you need it:
+
+- **Simple** — API key authentication (local testing)
+- **Basic** — JWT + HTTPS/TLS
+- **Encrypted** — ECDH key exchange + AES-256 payload encryption
+- **Enterprise** — OAuth2 + audit trail
 
 ### 🤖 Agent-to-Agent (A2A) System
 
