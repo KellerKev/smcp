@@ -118,3 +118,8 @@ dmypy.json
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+# Example demo secrets (generated at runtime, never commit)
+examples/.demo_secrets.json
+
+# Runtime-generated ephemeral demo keys
+ephemeral_encrypted_keys/

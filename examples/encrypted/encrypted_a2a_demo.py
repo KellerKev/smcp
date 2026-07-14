@@ -23,10 +23,12 @@ from typing import Dict, Any, Optional, List
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # examples/ dir for _demo_support
 
 from smcp_config import SMCPConfig, ClusterConfig, CryptoConfig
 from smcp_distributed_a2a import DistributedA2AAgent, DistributedNodeRegistry
 from smcp_a2a import AgentInfo
+from _demo_support import demo_config, DEMO_MODEL
 import requests
 
 
@@ -114,14 +116,7 @@ async def demo_encrypted_a2a_collaboration():
     print(f"   🔒 Keys are ephemeral (deleted after demo)")
     
     # Create encrypted configuration
-    config = SMCPConfig(
-        mode="encrypted", 
-        node_id="encrypted_coordinator",
-        server_url="ws://localhost:8765",
-        api_key="demo_key_123",
-        secret_key="my_secret_key_2024",
-        jwt_secret="jwt_secret_2024"
-    )
+    config = demo_config("encrypted_coordinator", mode="encrypted")
     
     # Configure crypto for full encryption
     config.crypto = CryptoConfig(

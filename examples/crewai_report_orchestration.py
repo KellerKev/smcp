@@ -47,6 +47,7 @@ os.environ["LITELLM_DISABLE_SPEND_LOGS"] = "true"
 
 # Add parent directory to imports
 sys.path.append(str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # examples/ dir for _demo_support
 
 # Set up logging (INFO level for cleaner output)
 logging.basicConfig(
@@ -85,6 +86,7 @@ from smcp_config import SMCPConfig, ClusterConfig
 from smcp_distributed_a2a import DistributedA2AAgent, DistributedNodeRegistry
 from smcp_a2a import AgentInfo, SMCPAgent, AgentRegistry, Task
 from smcp_connector_base import QueryRequest, QueryType
+from _demo_support import demo_config, DEMO_MODEL
 
 # Pydantic schemas for CrewAI tool arguments
 class DuckDBQuerySchema(BaseModel):
@@ -237,14 +239,14 @@ class SMCPA2ATool(BaseTool):
                 })
             
             # Create A2A workflow based on model preference  
-            if model_preference == "qwen3" or model_preference == "qwen3-coder":
+            if model_preference == "qwen3" or model_preference == "qwen3_coder":
                 workflow_steps = [{"capability": "qwen3", "task_type": "business_analysis"}]
             elif model_preference == "creative":
-                workflow_steps = [{"capability": "qwen2.5-coder", "task_type": "creative_generation"}]
+                workflow_steps = [{"capability": "qwen25_coder", "task_type": "creative_generation"}]
             else:
                 # Use both models for comprehensive analysis
                 workflow_steps = [
-                    {"capability": "qwen2.5-coder", "task_type": "initial_analysis"},
+                    {"capability": "qwen25_coder", "task_type": "initial_analysis"},
                     {"capability": "qwen3", "task_type": "enhancement"}
                 ]
             
@@ -558,14 +560,7 @@ class CrewAISMCPOrchestrator:
         
         # Setup A2A coordination
         print("   🤖 Setting up A2A coordination...")
-        config = SMCPConfig(
-            mode="basic",
-            node_id="crewai_orchestrator",
-            server_url="ws://localhost:8765",
-            api_key="crewai_key",
-            secret_key="crewai_secret",
-            jwt_secret="crewai_jwt"
-        )
+        config = demo_config("crewai_orchestrator", mode="basic")
         
         config.cluster = ClusterConfig(
             enabled=True,
@@ -595,15 +590,15 @@ class CrewAISMCPOrchestrator:
         print("   🧠 Registering AI agents for A2A capabilities...")
         
         # Create Qwen3 14B creative agent (replacing Qwen 2.5 Coder 7B)
-        qwen2.5-coder_info = AgentInfo(
+        qwen25_coder_info = AgentInfo(
             agent_id="local_qwen14b",
             name="Local Qwen3 14B Agent", 
             description="Fast creative text generation and analysis using Qwen3 14B",
-            specialties=["qwen2.5-coder", "creative_writing", "initial_analysis", "qwen3"],
+            specialties=["qwen25_coder", "creative_writing", "initial_analysis", "qwen3"],
             capabilities=["poem_generation", "creative_generation", "business_analysis"]
         )
         
-        qwen_creative_agent = LocalAIAgent(self.a2a_agent.config, qwen2.5-coder_info, "qwen3:14b-q4_K_M")
+        qwen_creative_agent = LocalAIAgent(self.a2a_agent.config, qwen25_coder_info, DEMO_MODEL)
         cluster_registry.register_local_agent(qwen_creative_agent)
         
         # Create Qwen3 30B agent for advanced analysis
@@ -615,7 +610,7 @@ class CrewAISMCPOrchestrator:
             capabilities=["enhancement", "business_analysis", "strategic_analysis", "complex_reasoning"]
         )
         
-        qwen30b_agent = LocalAIAgent(self.a2a_agent.config, qwen30b_info, "qwen3:30b-instruct")
+        qwen30b_agent = LocalAIAgent(self.a2a_agent.config, qwen30b_info, DEMO_MODEL)
         cluster_registry.register_local_agent(qwen30b_agent)
         
         print(f"   ✓ Registered {len(cluster_registry.local_agents)} AI agents")
@@ -631,7 +626,7 @@ class CrewAISMCPOrchestrator:
         
         # Configure Ollama LLM for CrewAI - using more powerful model
         ollama_llm = LLM(
-            model="ollama/qwen3:14b-q4_K_M",
+            model=f"ollama/{DEMO_MODEL}",
             base_url="http://localhost:11434"
         )
         
@@ -876,7 +871,13 @@ class CrewAISMCPOrchestrator:
         print("=" * 80)
         
         start_time = time.time()
-        result = self.crew.kickoff()
+        # Newer CrewAI requires the async entrypoint when called from within a
+        # running event loop (this method is async); fall back to sync kickoff
+        # for older CrewAI versions that lack kickoff_async.
+        if hasattr(self.crew, "kickoff_async"):
+            result = await self.crew.kickoff_async()
+        else:
+            result = self.crew.kickoff()
         execution_time = time.time() - start_time
         
         print("\n" + "=" * 80)

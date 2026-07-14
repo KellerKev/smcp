@@ -5,24 +5,18 @@ Example SCP Client - Demonstrates how to use the SCP client SDK
 
 import asyncio
 import sys
-from smcp_client import SMCPClient as SCPClient
-from smcp_config import SMCPConfig as SCPConfig
-from smcp_client_main import smcp_client as scp_client
+
+from _demo_support import demo_config, DEMO_MODEL
+from smcp_client import scp_client
 
 
 async def run_client_demo():
     """Run client demonstration"""
     print("🚀 Starting SCP Client Demo")
     print("="*50)
-    
-    # Create client configuration
-    config = SCPConfig(
-        node_id="example_client",
-        server_url="ws://localhost:8765",
-        api_key="demo_key_123",
-        secret_key="my_secret_key_2024",
-        jwt_secret="jwt_secret_2024"
-    )
+
+    # Same shared demo secrets as example_server (from examples/.demo_secrets.json).
+    config = demo_config("example_client")
     
     try:
         # Use context manager for automatic connection handling
@@ -73,15 +67,16 @@ async def run_client_demo():
                 
                 try:
                     ai_response = await client.chat_with_ai(
-                        "Explain what SCP protocol is in one short sentence"
+                        "Explain what SCP protocol is in one short sentence",
+                        model=DEMO_MODEL,
                     )
                     print(f"   AI Response: {ai_response}")
-                    
-                    # Test with different model if available
+
+                    # Test with the demo model
                     ai_response2 = await client.invoke_tool(
-                        "ai_chat", 
-                        prompt="What is 2+2?", 
-                        model="llama2"
+                        "ai_chat",
+                        prompt="What is 2+2?",
+                        model=DEMO_MODEL,
                     )
                     
                     if isinstance(ai_response2, dict):

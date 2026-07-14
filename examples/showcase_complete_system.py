@@ -15,24 +15,24 @@ import os
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # examples/ dir for _demo_support
 
 from smcp_config import SMCPConfig
 from smcp_server import SMCPServer, tool
 from smcp_client import scp_client, SMCPClient
 from smcp_a2a import create_demo_agents, AgentRegistry, SMCPAgent, AgentInfo
 from smcp_a2a_server import A2ANetworkServer
+from _demo_support import demo_config, DEMO_MODEL
 
 
 class SMCPShowcaseDemo:
     """Complete SCP system showcase demonstrating all features"""
     
     def __init__(self):
-        self.config = SMCPConfig(
-            node_id="showcase_demo",
+        self.config = demo_config(
+            "showcase_demo",
             server_url="ws://localhost:8766",  # Use different port
-            api_key="demo_key_123",  # Use consistent API key
-            secret_key="ultra_secure_showcase_key",
-            jwt_secret="jwt_showcase_secret_2024"
+            port=8766,
         )
         self.config.server.port = 8766
         
@@ -200,7 +200,7 @@ class SMCPShowcaseDemo:
             
             # AI chat (if available)
             if "ai_chat" in capabilities:
-                ai_response = await client.chat_with_ai("What is secure computing?")
+                ai_response = await client.chat_with_ai("What is secure computing?", model=DEMO_MODEL)
                 ai_preview = ai_response[:60] + "..." if len(ai_response) > 60 else ai_response
                 print(f"   ✅ AI Integration: {ai_preview}")
             
@@ -263,7 +263,7 @@ class SMCPShowcaseDemo:
             if "ai_chat" not in capabilities:
                 print("   ❌ Ollama not available - AI demo cannot continue")
                 print("   💡 Make sure Ollama is running: ollama serve")
-                print("   💡 Install required models: ollama pull qwen2.5-coder:7b-instruct-q4_K_M")
+                print("   💡 Install required models: ollama pull qwen25_coder:7b-instruct-q4_K_M")
                 raise Exception("AI showcase requires working Ollama server for AI integration demo")
             
             print("🎯 SCP AI Integration:")
@@ -271,7 +271,7 @@ class SMCPShowcaseDemo:
             # Direct AI interaction
             ai_response = await client.chat_with_ai(
                 "Compare the security of local vs cloud AI models in 50 words",
-                model="qwen2.5-coder:7b-instruct-q4_K_M"
+                model=DEMO_MODEL
             )
             print(f"   ✅ Local AI (Ollama): Response generated securely")
             print(f"      Preview: {ai_response[:80]}...")

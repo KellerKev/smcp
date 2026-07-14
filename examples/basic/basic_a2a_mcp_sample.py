@@ -25,11 +25,13 @@ from typing import Dict, Any
 
 # Add parent directory to imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # examples/ dir for _demo_support
 
 from smcp_config import SMCPConfig, ClusterConfig
 from smcp_distributed_a2a import DistributedA2AAgent, DistributedNodeRegistry
 from smcp_a2a import AgentInfo
 from smcp_mcp_bridge import MCPBridge, create_mindsdb_config
+from _demo_support import demo_config, DEMO_MODEL
 import requests
 
 
@@ -189,7 +191,7 @@ class BasicA2AMCPAgent(DistributedA2AAgent):
         # Route to TinyLLama via A2A
         tinyllama_task = {
             "prompt": tinyllama_prompt,
-            "model": "qwen2.5-coder:7b-instruct-q4_K_M",
+            "model": DEMO_MODEL,
             "max_tokens": 300,
             "temperature": 0.8
         }
@@ -205,7 +207,7 @@ class BasicA2AMCPAgent(DistributedA2AAgent):
             results["tinyllama_analysis"] = {
                 "status": "success",
                 "insights": tinyllama_result.get("final_data", {}).get("content", "No insights generated"),
-                "model": "qwen2.5-coder:7b-instruct-q4_K_M"
+                "model": DEMO_MODEL
             }
         else:
             print(f"   ❌ TinyLLama analysis failed: {tinyllama_result.get('error')}")
@@ -237,7 +239,7 @@ class BasicA2AMCPAgent(DistributedA2AAgent):
         # Route to Mistral via A2A  
         mistral_task = {
             "prompt": mistral_prompt,
-            "model": "qwen3-coder:30b-a3b-q4_K_M", 
+            "model": DEMO_MODEL,
             "max_tokens": 800,
             "temperature": 0.7
         }
@@ -253,7 +255,7 @@ class BasicA2AMCPAgent(DistributedA2AAgent):
             results["mistral_analysis"] = {
                 "status": "success", 
                 "recommendations": mistral_result.get("final_data", {}).get("content", "No recommendations generated"),
-                "model": "qwen3-coder:30b-a3b-q4_K_M"
+                "model": DEMO_MODEL
             }
         else:
             print(f"   ❌ Mistral 7B analysis failed: {mistral_result.get('error')}")
@@ -295,7 +297,7 @@ class BasicA2AMCPAgent(DistributedA2AAgent):
             "security_mode": "basic_jwt_https",
             "results": results,
             "execution_time": datetime.now().isoformat(),
-            "models_used": ["qwen2.5-coder:7b-instruct-q4_K_M", "qwen3-coder:30b-a3b-q4_K_M"],
+            "models_used": [DEMO_MODEL, DEMO_MODEL],
             "data_sources": ["postgresql_via_mindsdb", "mcp_bridge"]
         }
         
@@ -348,14 +350,7 @@ async def demo_basic_a2a_mcp_integration():
         print("   💡 Start with: ollama serve")
     
     # Setup SMCP configuration
-    config = SMCPConfig(
-        mode="basic",
-        node_id="basic_a2a_mcp_demo",
-        server_url="ws://localhost:8765",
-        api_key="basic_a2a_mcp_key",
-        secret_key="basic_a2a_mcp_secret",
-        jwt_secret="basic_a2a_mcp_jwt"
-    )
+    config = demo_config("basic_a2a_mcp_demo", mode="basic")
     
     # Configure distributed cluster
     config.cluster = ClusterConfig(

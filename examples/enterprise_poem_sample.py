@@ -16,11 +16,13 @@ from typing import Dict, Any, Optional, List
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # examples/ dir for _demo_support
 
 from smcp_config import SMCPConfig, OAuth2Config, CryptoConfig, ClusterConfig
 from smcp_distributed_a2a import DistributedA2AAgent, DistributedNodeRegistry
 from smcp_a2a import AgentInfo
 from smcp_auth_enhanced import EnhancedSMCPSecurity
+from _demo_support import demo_config, DEMO_MODEL, apply_demo_secrets
 import requests
 
 
@@ -130,12 +132,12 @@ class EnterprisePoetryAgent(DistributedA2AAgent):
         # Define enterprise workflow with enhanced security
         workflow_steps = [
             {
-                "capability": "qwen2.5-coder",
+                "capability": "qwen25_coder",
                 "task_type": "poem_generation",
                 "security_context": {"level": security_level, "encryption": True}
             },
             {
-                "capability": "qwen3-coder", 
+                "capability": "qwen3_coder", 
                 "task_type": "enhancement",
                 "security_context": {"level": security_level, "encryption": True}
             },
@@ -225,7 +227,7 @@ class EnterprisePoetryAgent(DistributedA2AAgent):
         except Exception as e:
             print(f"   ❌ Ollama poem generation failed: {e}")
             print("   💡 Make sure Ollama is running: ollama serve")  
-            print("   💡 Install required model: ollama pull qwen2.5-coder:7b-instruct-q4_K_M")
+            print("   💡 Install required model: ollama pull qwen25_coder:7b-instruct-q4_K_M")
             return {
                 "status": "failed",
                 "error": f"Ollama poem generation failed - demo requires working Ollama server: {e}",
@@ -511,20 +513,20 @@ async def demo_enterprise_features():
     modes_to_test = [
         {
             "name": "Simple Mode (Backward Compatible)",
-            "config": SMCPConfig(mode="simple")
+            "config": demo_config("enterprise_poet_simple", mode="simple")
         },
         {
             "name": "Development Enterprise Mode",
-            "config": SMCPConfig(
+            "config": apply_demo_secrets(SMCPConfig(
                 mode="development",
                 oauth2=OAuth2Config(enabled=True),
                 crypto=CryptoConfig(key_exchange="ecdh", perfect_forward_secrecy=True),
                 cluster=ClusterConfig(enabled=True, simulate_distributed=True)
-            )
+            ), node_id="enterprise_poet_dev")
         },
         {
             "name": "Enterprise Mode (Simulated)",
-            "config": SMCPConfig(
+            "config": apply_demo_secrets(SMCPConfig(
                 mode="enterprise",
                 oauth2=OAuth2Config(
                     enabled=True,
@@ -539,7 +541,7 @@ async def demo_enterprise_features():
                     enabled=True,
                     simulate_distributed=True
                 )
-            )
+            ), node_id="enterprise_poet_enterprise")
         }
     ]
     

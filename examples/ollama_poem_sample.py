@@ -16,9 +16,11 @@ from typing import Dict, Any, Optional
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # examples/ dir for _demo_support
 
 from smcp_config import SMCPConfig
 from smcp_a2a import SMCPAgent, AgentInfo, AgentRegistry, Task
+from _demo_support import demo_config, DEMO_MODEL
 import requests
 
 
@@ -40,8 +42,8 @@ class PoemGenerationAgent(SMCPAgent):
         from smcp_core import Capability
         
         # Qwen 2.5 Coder 7B poem generation
-        qwen2.5-coder_cap = Capability(
-            name="qwen2.5-coder_poem",
+        qwen25_coder_cap = Capability(
+            name="qwen25_coder_poem",
             description="Generate poem using Qwen 2.5 Coder 7B local Ollama",
             parameters={
                 "theme": {"type": "string", "description": "Poem theme or subject"},
@@ -49,18 +51,18 @@ class PoemGenerationAgent(SMCPAgent):
                 "length": {"type": "string", "default": "medium", "description": "Poem length"}
             }
         )
-        self.register_capability(qwen2.5-coder_cap, self._generate_qwen2.5-coder_poem)
+        self.register_capability(qwen25_coder_cap, self._generate_qwen25_coder_poem)
         
         # Qwen3 Coder poem enhancement
-        qwen3-coder_cap = Capability(
-            name="qwen3-coder_enhance",
+        qwen3_coder_cap = Capability(
+            name="qwen3_coder_enhance",
             description="Enhance poem using Qwen3 Coder model",
             parameters={
                 "poem": {"type": "string", "description": "Original poem to enhance"},
                 "enhancement_type": {"type": "string", "default": "refine", "description": "Type of enhancement"}
             }
         )
-        self.register_capability(qwen3-coder_cap, self._enhance_with_qwen3-coder)
+        self.register_capability(qwen3_coder_cap, self._enhance_with_qwen3_coder)
         
         # Secure local storage
         storage_cap = Capability(
@@ -84,7 +86,7 @@ class PoemGenerationAgent(SMCPAgent):
         )
         self.register_capability(collab_cap, self._collaborative_poem_generation)
     
-    def _generate_qwen2.5-coder_poem(self, theme: str, style: str = "free_verse", length: str = "medium") -> Dict[str, Any]:
+    def _generate_qwen25_coder_poem(self, theme: str, style: str = "free_verse", length: str = "medium") -> Dict[str, Any]:
         """Generate initial poem using Qwen 2.5 Coder 7B via secure channel"""
         try:
             # Construct secure prompt
@@ -101,7 +103,7 @@ class PoemGenerationAgent(SMCPAgent):
             response = requests.post(
                 f'{self.config.ai.ollama_url}/api/generate',
                 json={
-                    "model": "qwen2.5-coder:7b-instruct-q4_K_M",
+                    "model": DEMO_MODEL,
                     "prompt": prompt,
                     "stream": False,
                     "options": {
@@ -122,7 +124,7 @@ class PoemGenerationAgent(SMCPAgent):
                     "theme": theme,
                     "style": style,
                     "length": length,
-                    "model": "qwen2.5-coder:7b-instruct-q4_K_M",
+                    "model": DEMO_MODEL,
                     "agent": self.agent_info.name,
                     "timestamp": datetime.now().isoformat(),
                     "security_level": "encrypted_local"
@@ -134,13 +136,13 @@ class PoemGenerationAgent(SMCPAgent):
                     "status": "success",
                     "poem_data": poem_data,
                     "word_count": len(ai_response.split()),
-                    "generation_method": "qwen2.5-coder_secure"
+                    "generation_method": "qwen25_coder_secure"
                 }
             else:
                 return {
                     "status": "error",
                     "error": f"Qwen 2.5 Coder 7B service error: {response.status_code}",
-                    "model": "qwen2.5-coder:7b-instruct-q4_K_M"
+                    "model": DEMO_MODEL
                 }
                 
         except Exception as e:
@@ -150,7 +152,7 @@ class PoemGenerationAgent(SMCPAgent):
                 "note": "Ensure Ollama is running with Qwen 2.5 Coder 7B model"
             }
     
-    def _enhance_with_qwen3-coder(self, poem: str, enhancement_type: str = "refine") -> Dict[str, Any]:
+    def _enhance_with_qwen3_coder(self, poem: str, enhancement_type: str = "refine") -> Dict[str, Any]:
         """Enhance poem using Qwen3 Coder model via secure A2A"""
         try:
             enhancement_prompts = {
@@ -166,7 +168,7 @@ class PoemGenerationAgent(SMCPAgent):
             response = requests.post(
                 f'{self.config.ai.ollama_url}/api/generate',
                 json={
-                    "model": "qwen3-coder:30b-a3b-q4_K_M",
+                    "model": DEMO_MODEL,
                     "prompt": prompt,
                     "stream": False,
                     "options": {
@@ -185,7 +187,7 @@ class PoemGenerationAgent(SMCPAgent):
                     "original_poem": poem,
                     "enhanced_content": enhanced_poem,
                     "enhancement_type": enhancement_type,
-                    "model": "qwen3-coder:30b-a3b-q4_K_M",
+                    "model": DEMO_MODEL,
                     "agent": self.agent_info.name,
                     "timestamp": datetime.now().isoformat(),
                     "security_level": "encrypted_a2a"
@@ -197,11 +199,11 @@ class PoemGenerationAgent(SMCPAgent):
                     "status": "success",
                     "enhancement_data": enhancement_data,
                     "improvement_score": 0.85,  # Simulated quality metric
-                    "model_used": "qwen3-coder:latest"
+                    "model_used": "qwen3_coder:latest"
                 }
             else:
                 print(f"   ❌ Qwen3 Coder enhancement failed: HTTP {response.status_code}")
-                print("   💡 Make sure Qwen3 Coder model is installed: ollama pull qwen3-coder:latest")
+                print("   💡 Make sure Qwen3 Coder model is installed: ollama pull qwen3_coder:latest")
                 return {
                     "status": "error", 
                     "error": f"Qwen3 Coder service error: {response.status_code}",
@@ -211,7 +213,7 @@ class PoemGenerationAgent(SMCPAgent):
         except Exception as e:
             print(f"   ❌ Qwen3 Coder enhancement error: {e}")
             print("   💡 Make sure Ollama is running: ollama serve")
-            print("   💡 Make sure Qwen3 Coder model is installed: ollama pull qwen3-coder:latest")
+            print("   💡 Make sure Qwen3 Coder model is installed: ollama pull qwen3_coder:latest")
             return {
                 "status": "error",
                 "error": f"Failed to enhance with Qwen3 Coder: {str(e)}",
@@ -280,31 +282,31 @@ class PoemGenerationAgent(SMCPAgent):
                 self.logger.info(f"Starting sequential poem collaboration: {collaboration_id}")
                 
                 # Step 1: Generate initial poem with Qwen 2.5 Coder 7B
-                qwen2.5-coder_result = self._generate_qwen2.5-coder_poem(
+                qwen25_coder_result = self._generate_qwen25_coder_poem(
                     theme=theme,
                     style="free_verse",
                     length="medium"
                 )
                 
-                if qwen2.5-coder_result["status"] != "success":
-                    return qwen2.5-coder_result
+                if qwen25_coder_result["status"] != "success":
+                    return qwen25_coder_result
                 
                 # Step 2: Enhance with Qwen3 Coder
-                qwen3-coder_result = self._enhance_with_qwen3-coder(
-                    poem=qwen2.5-coder_result["poem_data"]["content"],
+                qwen3_coder_result = self._enhance_with_qwen3_coder(
+                    poem=qwen25_coder_result["poem_data"]["content"],
                     enhancement_type="refine"
                 )
                 
-                if qwen3-coder_result["status"] != "success":
+                if qwen3_coder_result["status"] != "success":
                     # Use Qwen 2.5 Coder 7B result if Qwen3 Coder fails
-                    final_poem = qwen2.5-coder_result["poem_data"]
+                    final_poem = qwen25_coder_result["poem_data"]
                     enhancement_status = "failed_fallback_to_original"
                 else:
                     # Combine results
                     final_poem = {
-                        **qwen2.5-coder_result["poem_data"],
-                        "content": qwen3-coder_result["enhancement_data"]["enhanced_content"],
-                        "collaborative_process": "qwen2.5-coder_to_qwen3-coder",
+                        **qwen25_coder_result["poem_data"],
+                        "content": qwen3_coder_result["enhancement_data"]["enhanced_content"],
+                        "collaborative_process": "qwen25_coder_to_qwen3_coder",
                         "enhancement_applied": True
                     }
                     enhancement_status = "success"
@@ -315,7 +317,7 @@ class PoemGenerationAgent(SMCPAgent):
                     metadata={
                         "collaboration_id": collaboration_id,
                         "collaboration_type": collaboration_type,
-                        "agents_involved": ["qwen2.5-coder", "qwen3-coder"],
+                        "agents_involved": ["qwen25_coder", "qwen3_coder"],
                         "enhancement_status": enhancement_status
                     }
                 )
@@ -326,7 +328,7 @@ class PoemGenerationAgent(SMCPAgent):
                     "collaboration_type": collaboration_type,
                     "final_poem": final_poem,
                     "storage_result": storage_result,
-                    "agents_used": ["qwen2.5-coder:7b-instruct-q4_K_M", "qwen3-coder:30b-a3b-q4_K_M"],
+                    "agents_used": ["qwen25_coder:7b-instruct-q4_K_M", "qwen3_coder:30b-a3b-q4_K_M"],
                     "security_flow": "encrypted_a2a_to_mcp_local"
                 }
             
@@ -349,27 +351,27 @@ def create_poem_agents(config: SMCPConfig) -> Dict[str, PoemGenerationAgent]:
     registry = AgentRegistry()
     
     # Qwen 2.5 Coder 7B Agent (Initial Generation)
-    qwen2.5-coder_agent = PoemGenerationAgent(
+    qwen25_coder_agent = PoemGenerationAgent(
         config,
         AgentInfo(
-            agent_id="qwen2.5-coder_poet",
+            agent_id="qwen25_coder_poet",
             name="Qwen 2.5 Coder 7B Poet",
             description="Initial poem generation using Qwen 2.5 Coder 7B model",
             specialties=["poem_generation", "creative_writing", "initial_draft"],
-            capabilities=["qwen2.5-coder_poem", "creative_ideation"]
+            capabilities=["qwen25_coder_poem", "creative_ideation"]
         ),
         registry
     )
     
     # Qwen3 Coder Agent (Enhancement and Refinement)  
-    qwen3-coder_agent = PoemGenerationAgent(
+    qwen3_coder_agent = PoemGenerationAgent(
         config,
         AgentInfo(
-            agent_id="qwen3-coder_enhancer", 
+            agent_id="qwen3_coder_enhancer", 
             name="Qwen3 Coder Enhancer",
             description="Poem enhancement and refinement using Qwen3 Coder model",
             specialties=["poem_enhancement", "literary_refinement", "style_improvement"],
-            capabilities=["qwen3-coder_enhance", "literary_analysis"]
+            capabilities=["qwen3_coder_enhance", "literary_analysis"]
         ),
         registry
     )
@@ -388,8 +390,8 @@ def create_poem_agents(config: SMCPConfig) -> Dict[str, PoemGenerationAgent]:
     )
     
     return {
-        "qwen2.5-coder": qwen2.5-coder_agent,
-        "qwen3-coder": qwen3-coder_agent,
+        "qwen25_coder": qwen25_coder_agent,
+        "qwen3_coder": qwen3_coder_agent,
         "mcp_storage": mcp_agent
     }
 
@@ -403,7 +405,7 @@ async def demo_poem_generation():
     print("=" * 60)
     
     # Load configuration
-    config = SMCPConfig()
+    config = demo_config("ollama_poem_demo")
     
     # Check Ollama availability
     try:
@@ -415,11 +417,11 @@ async def demo_poem_generation():
         models = [m["name"] for m in response.json().get("models", [])]
         print(f"✓ Ollama available with models: {models}")
         
-        required_models = ["qwen2.5-coder:7b-instruct-q4_K_M", "qwen3-coder:30b-a3b-q4_K_M"]
+        required_models = [DEMO_MODEL]
         missing_models = [m for m in required_models if m not in models]
         if missing_models:
             print(f"⚠️  Missing models: {missing_models}")
-            print("   Run: ollama pull qwen2.5-coder && ollama pull qwen3-coder")
+            print("   Run: ollama pull qwen25_coder && ollama pull qwen3_coder")
             return
             
     except Exception as e:
@@ -428,7 +430,7 @@ async def demo_poem_generation():
     
     # Create specialized agents
     agents = create_poem_agents(config)
-    coordinator = agents["qwen2.5-coder"]  # Use Qwen 2.5 Coder 7B as coordinator
+    coordinator = agents["qwen25_coder"]  # Use Qwen 2.5 Coder 7B as coordinator
     
     # Demo themes
     themes = [

@@ -29,11 +29,13 @@ from cryptography.hazmat.primitives import serialization
 
 # Add parent directory to imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # examples/ dir for _demo_support
 
 from smcp_config import SMCPConfig, ClusterConfig, CryptoConfig
 from smcp_distributed_a2a import DistributedA2AAgent, DistributedNodeRegistry
 from smcp_a2a import AgentInfo
 from smcp_mcp_bridge import MCPBridge, create_mindsdb_config
+from _demo_support import demo_config, DEMO_MODEL
 import requests
 
 
@@ -236,7 +238,7 @@ class EncryptedA2AMCPAgent(DistributedA2AAgent):
         # Route to TinyLLama via encrypted A2A
         encrypted_tinyllama_task = {
             "prompt": encrypted_tinyllama_prompt,
-            "model": "qwen2.5-coder:7b-instruct-q4_K_M",
+            "model": DEMO_MODEL,
             "max_tokens": 350,
             "temperature": 0.8,
             "security_context": {
@@ -259,7 +261,7 @@ class EncryptedA2AMCPAgent(DistributedA2AAgent):
             results["encrypted_tinyllama_analysis"] = {
                 "status": "success",
                 "insights": encrypted_tinyllama_result.get("final_data", {}).get("content", "No encrypted insights generated"),
-                "model": "qwen2.5-coder:7b-instruct-q4_K_M",
+                "model": DEMO_MODEL,
                 "security_level": "encrypted_a2a_transport"
             }
         else:
@@ -296,7 +298,7 @@ class EncryptedA2AMCPAgent(DistributedA2AAgent):
         # Route to Mistral via maximum security A2A
         encrypted_mistral_task = {
             "prompt": encrypted_mistral_prompt,
-            "model": "qwen3-coder:30b-a3b-q4_K_M",
+            "model": DEMO_MODEL,
             "max_tokens": 1000,
             "temperature": 0.7,
             "security_context": {
@@ -322,7 +324,7 @@ class EncryptedA2AMCPAgent(DistributedA2AAgent):
             results["encrypted_mistral_analysis"] = {
                 "status": "success",
                 "recommendations": encrypted_mistral_result.get("final_data", {}).get("content", "No encrypted recommendations generated"),
-                "model": "qwen3-coder:30b-a3b-q4_K_M",
+                "model": DEMO_MODEL,
                 "security_level": "maximum_encryption_pfs"
             }
         else:
@@ -392,7 +394,7 @@ class EncryptedA2AMCPAgent(DistributedA2AAgent):
             },
             "results": results,
             "execution_time": datetime.now().isoformat(),
-            "models_used": ["qwen2.5-coder:7b-instruct-q4_K_M", "qwen3-coder:30b-a3b-q4_K_M"],
+            "models_used": [DEMO_MODEL, DEMO_MODEL],
             "data_sources": ["encrypted_postgresql_via_mindsdb", "encrypted_mcp_bridge"],
             "security_assurance": "maximum_encryption_zero_trust"
         }
@@ -472,14 +474,7 @@ async def demo_encrypted_a2a_mcp_integration():
         print("   💡 Install models: ollama pull tinyllama:latest && ollama pull mistral:7b-instruct-q4_K_M")
     
     # Setup encrypted SMCP configuration
-    config = SMCPConfig(
-        mode="encrypted",
-        node_id="encrypted_a2a_mcp_demo",
-        server_url="ws://localhost:8765",
-        api_key="encrypted_a2a_mcp_key_aes256",
-        secret_key="encrypted_a2a_mcp_secret_2024_pfs",
-        jwt_secret="encrypted_a2a_mcp_jwt_maximum_security"
-    )
+    config = demo_config("encrypted_a2a_mcp_demo", mode="encrypted")
     
     # Configure maximum encryption
     config.crypto = CryptoConfig(

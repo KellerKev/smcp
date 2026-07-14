@@ -24,10 +24,12 @@ from typing import Dict, Any, Optional, List
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # examples/ dir for _demo_support
 
 from smcp_config import SMCPConfig, ClusterConfig, CryptoConfig
 from smcp_distributed_a2a import DistributedA2AAgent, DistributedNodeRegistry
 from smcp_a2a import AgentInfo
+from _demo_support import demo_config, DEMO_MODEL
 import requests
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
@@ -123,14 +125,7 @@ async def demo_encrypted_poetry_generation():
     print(f"   🛡️ Perfect Forward Secrecy: Past sessions remain secure")
     
     # Create encrypted configuration
-    config = SMCPConfig(
-        mode="encrypted",
-        node_id="encrypted_poetry_coordinator",
-        server_url="ws://localhost:8765",
-        api_key="demo_key_123",
-        secret_key="my_secret_key_2024",
-        jwt_secret="jwt_secret_2024"
-    )
+    config = demo_config("encrypted_poetry_coordinator", mode="encrypted")
     
     # Configure crypto for maximum security
     config.crypto = CryptoConfig(
@@ -187,7 +182,7 @@ async def demo_encrypted_poetry_generation():
             "security_mode": "ecdh_encrypted_max_security",
             "encryption_level": "aes256_gcm_pfs"
         },
-        target_capability="qwen2.5-coder"
+        target_capability="qwen25_coder"
     )
     
     if encrypted_single_result["status"] == "completed":
@@ -215,8 +210,8 @@ async def demo_encrypted_poetry_generation():
     print("   🛡️ Security: All JWT tokens encrypted, never exposed in transit")
     
     encrypted_workflow_steps = [
-        {"capability": "qwen2.5-coder", "task_type": "poem_generation"},
-        {"capability": "qwen3-coder", "task_type": "enhancement"}, 
+        {"capability": "qwen25_coder", "task_type": "poem_generation"},
+        {"capability": "qwen3_coder", "task_type": "enhancement"}, 
         {"capability": "mcp_storage", "task_type": "store"}
     ]
     
@@ -290,7 +285,7 @@ async def demo_encrypted_poetry_generation():
             "workflow_metadata": {
                 "steps_completed": len(encrypted_workflow_result['results']),
                 "encrypted_servers_used": list(servers_used),
-                "collaboration_type": "encrypted_qwen2.5-coder_qwen3-coder_storage",
+                "collaboration_type": "encrypted_qwen25_coder_qwen3_coder_storage",
                 "security_level": "maximum"
             }
         }
@@ -357,13 +352,13 @@ async def demo_encrypted_poetry_generation():
     print("   Mode: Concurrent encrypted execution with maximum security")
     
     encrypted_parallel_result = await coordinator._handle_multi_server_collaboration(
-        participants=["qwen2.5-coder", "qwen3-coder"],
+        participants=["qwen25_coder", "qwen3_coder"],
         collaboration_type="parallel",
         data={
             "collaborative_theme": "Quantum Cryptography and Post-Quantum Security",
             "individual_prompts": {
-                "qwen2.5-coder": "Write about quantum encryption from a technical perspective",
-                "qwen3-coder": "Write about post-quantum security from an enterprise perspective"
+                "qwen25_coder": "Write about quantum encryption from a technical perspective",
+                "qwen3_coder": "Write about post-quantum security from an enterprise perspective"
             },
             "security_mode": "parallel_ecdh_max_encryption",
             "encryption_features": {

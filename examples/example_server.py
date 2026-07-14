@@ -6,49 +6,31 @@ Example SCP Server - Demonstrates how to set up and run an SCP server
 import asyncio
 import sys
 from datetime import datetime
-from smcp_server import SMCPServer as SCPServer
-from smcp_config import SMCPConfig as SCPConfig
 
-def tool(name, description):
-    """Tool decorator placeholder"""
-    def decorator(func):
-        func.tool_name = name
-        func.tool_description = description
-        return func
-    return decorator
+from _demo_support import demo_config
+from smcp_server import SMCPServer as SCPServer
 
 
 def main():
     """Main server function"""
     print("🚀 Starting SCP Example Server")
     print("="*50)
-    
-    # Create server configuration
-    config = SCPConfig(
-        node_id="example_server",
-        server_url="ws://localhost:8765",
-        api_key="demo_key_123",
-        secret_key="my_secret_key_2024",
-        jwt_secret="jwt_secret_2024"
-    )
-    
+
+    # Strong, per-machine demo secrets (shared with example_client via the cached
+    # examples/.demo_secrets.json). Loopback demo, so ws:// is permitted.
+    config = demo_config("example_server")
+
     # Create server
     server = SCPServer(config)
-    
-    # Register custom tools
-    @tool("timestamp", "Get current timestamp", {})
+
+    # Register custom tools. register_tool takes (name, description, parameters,
+    # handler) and wires the handler into the node's capabilities.
     def get_timestamp() -> str:
         return datetime.now().isoformat()
-    
-    @tool("reverse_string", "Reverse a string", {
-        "text": {"type": "string", "description": "String to reverse"}
-    })
+
     def reverse_string(text: str) -> str:
         return text[::-1]
-    
-    @tool("word_count", "Count words in text", {
-        "text": {"type": "string", "description": "Text to analyze"}
-    })
+
     def word_count(text: str) -> dict:
         words = text.split()
         return {
@@ -56,17 +38,18 @@ def main():
             "character_count": len(text),
             "unique_words": len(set(words))
         }
-    
-    # Register the tools
-    for func in [get_timestamp, reverse_string, word_count]:
-        if hasattr(func, '_scp_tool'):
-            tool_info = func._scp_tool
-            server.register_tool(
-                tool_info["name"],
-                tool_info["description"],
-                tool_info["parameters"],
-                func
-            )
+
+    server.register_tool("timestamp", "Get current timestamp", {}, get_timestamp)
+    server.register_tool(
+        "reverse_string", "Reverse a string",
+        {"text": {"type": "string", "description": "String to reverse"}},
+        reverse_string,
+    )
+    server.register_tool(
+        "word_count", "Count words in text",
+        {"text": {"type": "string", "description": "Text to analyze"}},
+        word_count,
+    )
     
     print("\n📋 Server Features:")
     print("   ✓ Built-in calculator")

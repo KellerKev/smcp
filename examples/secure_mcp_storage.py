@@ -19,9 +19,11 @@ import base64
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # examples/ dir for _demo_support
 
 from smcp_core import SMCPNode, MessageType, SMCPMessage, Capability
 from smcp_config import SMCPConfig
+from _demo_support import demo_config, DEMO_MODEL
 
 
 class SecureMCPStorage:
@@ -403,7 +405,7 @@ async def demo_secure_mcp_storage():
     print("🔐 Secure MCP Storage Demo")
     print("=" * 50)
     
-    config = SCPConfig()
+    config = demo_config("mcp_storage_demo")
     mcp_agent = SecureMCPStorageAgent(config)
     
     # Test poem storage
@@ -420,7 +422,7 @@ async def demo_secure_mcp_storage():
     test_collaboration = {
         "collaboration_id": str(uuid.uuid4()),
         "collaboration_type": "sequential",
-        "agents_involved": ["qwen2.5-coder:7b-instruct-q4_K_M", "qwen3-coder:latest"],
+        "agents_involved": ["qwen25_coder:7b-instruct-q4_K_M", "qwen3_coder:latest"],
         "security_flow": "encrypted_a2a_to_mcp_local"
     }
     

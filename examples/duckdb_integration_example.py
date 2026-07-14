@@ -35,12 +35,14 @@ from typing import Dict, Any, List
 
 # Add parent directory to imports
 sys.path.append(str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # examples/ dir for _demo_support
 
 from connectors.smcp_duckdb_connector import DuckDBConnector, create_duckdb_connector
 from smcp_connector_base import ConnectorConfig, ConnectorType, QueryRequest, QueryType
 from smcp_config import SMCPConfig, ClusterConfig
 from smcp_distributed_a2a import DistributedA2AAgent, DistributedNodeRegistry
 from smcp_a2a import AgentInfo
+from _demo_support import demo_config, DEMO_MODEL
 import requests
 
 class SMCPDuckDBAnalyticsAgent(DistributedA2AAgent):
@@ -313,16 +315,16 @@ Generate the SQL query now:"""
         
         print(f"   🤖 Asking Qwen3 Coder 30B to generate SQL query...")
         
-        qwen3-coder_sql_task = {
+        qwen3_coder_sql_task = {
             "prompt": sql_generation_prompt,
-            "model": "qwen3-coder:30b-a3b-q4_K_M",
+            "model": DEMO_MODEL,
             "max_tokens": 500,
             "temperature": 0.1  # Low temperature for precise SQL generation
         }
         
         # Direct Ollama call for SQL generation (bypass A2A routing for demo)
         sql_generation_result = await self._call_ollama_directly(
-            model="qwen3-coder:30b-a3b-q4_K_M",
+            model=DEMO_MODEL,
             prompt=sql_generation_prompt,
             max_tokens=500,
             temperature=0.1
@@ -330,7 +332,7 @@ Generate the SQL query now:"""
         
         if sql_generation_result["status"] != "completed":
             print(f"   ❌ Qwen3 Coder SQL generation failed: {sql_generation_result.get('error')}")
-            print("   💡 Make sure Qwen3 Coder is installed: ollama pull qwen3-coder:30b-a3b-q4_K_M")
+            print("   💡 Make sure Qwen3 Coder is installed: ollama pull qwen3_coder:30b-a3b-q4_K_M")
             raise Exception("SQL generation failed - Qwen3 Coder 30B required for this workflow")
         
         generated_sql = sql_generation_result.get("final_data", {}).get("content", "").strip()
@@ -348,7 +350,7 @@ Generate the SQL query now:"""
         results["sql_generation"] = {
             "status": "success",
             "generated_sql": generated_sql,
-            "model": "qwen3-coder:30b-a3b-q4_K_M"
+            "model": DEMO_MODEL
         }
         
         # Step 3: Execute Qwen3 Coder-generated SQL against DuckDB via SMCP Connector
@@ -401,7 +403,7 @@ Generate the SQL query now:"""
                 "question": analysis_question,
                 "results": results,
                 "error": "AI-generated SQL query failed execution",
-                "architecture": "qwen3-coder_7b_sql_generation_duckdb_smcp_connector",
+                "architecture": "qwen3_coder_7b_sql_generation_duckdb_smcp_connector",
                 "timestamp": datetime.now().isoformat()
             }
         
@@ -449,16 +451,16 @@ Generate the SQL query now:"""
         
         print(f"   🤖 Having Qwen3 Coder 30B analyze the data it retrieved...")
         
-        qwen3-coder_analysis_task = {
+        qwen3_coder_analysis_task = {
             "prompt": analysis_prompt,
-            "model": "qwen3-coder:30b-a3b-q4_K_M",
+            "model": DEMO_MODEL,
             "max_tokens": 1000,
             "temperature": 0.7
         }
         
         # Direct Ollama call for business intelligence analysis
         analysis_result = await self._call_ollama_directly(
-            model="qwen3-coder:30b-a3b-q4_K_M",
+            model=DEMO_MODEL,
             prompt=analysis_prompt,
             max_tokens=1000,
             temperature=0.7
@@ -476,14 +478,14 @@ Generate the SQL query now:"""
             results["business_intelligence"] = {
                 "status": "success",
                 "analysis": analysis_content,
-                "model": "qwen3-coder:30b-a3b-q4_K_M"
+                "model": DEMO_MODEL
             }
         else:
             print(f"   ❌ Qwen3 Coder analysis failed: {analysis_result.get('error')}")
             results["business_intelligence"] = {
                 "status": "failed",
                 "error": analysis_result.get("error"),
-                "model": "qwen3-coder:30b-a3b-q4_K_M"
+                "model": DEMO_MODEL
             }
         
         return {
@@ -491,7 +493,7 @@ Generate the SQL query now:"""
             "domain": domain,
             "question": analysis_question,
             "results": results,
-            "architecture": "qwen3-coder_7b_sql_generation_duckdb_smcp_connector_analysis",
+            "architecture": "qwen3_coder_7b_sql_generation_duckdb_smcp_connector_analysis",
             "ai_driven": True,
             "timestamp": datetime.now().isoformat()
         }
@@ -632,12 +634,12 @@ async def demo_duckdb_integration():
         if response.status_code == 200:
             models = response.json().get("models", [])
             model_names = [m.get("name", "") for m in models]
-            qwen2.5-coder_available = any("qwen2.5-coder" in name for name in model_names)
-            qwen3-coder_available = any("qwen3-coder" in name for name in model_names)
+            qwen25_coder_available = any("qwen25_coder" in name for name in model_names)
+            qwen3_coder_available = any("qwen3_coder" in name for name in model_names)
             
             print(f"   ✅ Ollama running with {len(models)} models")
-            print(f"   🤖 Qwen 2.5 Coder 7B: {'✅ Available' if qwen2.5-coder_available else '❌ Missing'}")
-            print(f"   🔥 Qwen3 Coder 30B: {'✅ Available' if qwen3-coder_available else '❌ Missing'}")
+            print(f"   🤖 Qwen 2.5 Coder 7B: {'✅ Available' if qwen25_coder_available else '❌ Missing'}")
+            print(f"   🔥 Qwen3 Coder 30B: {'✅ Available' if qwen3_coder_available else '❌ Missing'}")
         else:
             print("   ⚠️ Ollama status unclear")
     except:
@@ -645,14 +647,7 @@ async def demo_duckdb_integration():
         print("   💡 Start Ollama: ollama serve")
     
     # Setup SMCP configuration
-    config = SMCPConfig(
-        mode="basic",
-        node_id="duckdb_analytics_demo",
-        server_url="ws://localhost:8765",
-        api_key="duckdb_analytics_key",
-        secret_key="duckdb_analytics_secret",
-        jwt_secret="duckdb_analytics_jwt"
-    )
+    config = demo_config("duckdb_analytics_demo", mode="basic")
     
     # Configure distributed cluster
     config.cluster = ClusterConfig(

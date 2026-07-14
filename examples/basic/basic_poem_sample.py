@@ -23,10 +23,12 @@ from typing import Dict, Any, Optional, List
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # examples/ dir for _demo_support
 
 from smcp_config import SMCPConfig, ClusterConfig
 from smcp_distributed_a2a import DistributedA2AAgent, DistributedNodeRegistry
 from smcp_a2a import AgentInfo
+from _demo_support import demo_config, DEMO_MODEL
 import requests
 
 
@@ -64,14 +66,7 @@ async def demo_basic_poetry_generation():
     print("=" * 70)
     
     # Create basic configuration (production-ready)
-    config = SMCPConfig(
-        mode="basic",
-        node_id="basic_poetry_coordinator",
-        server_url="ws://localhost:8765",  # In prod: wss://your-domain.com
-        api_key="demo_key_123",
-        secret_key="my_secret_key_2024",
-        jwt_secret="jwt_secret_2024"
-    )
+    config = demo_config("basic_poetry_coordinator", mode="basic")
     
     # Configure cluster for localhost simulation
     config.cluster = ClusterConfig(
@@ -119,7 +114,7 @@ async def demo_basic_poetry_generation():
             "style": "free_verse",
             "security_mode": "basic_jwt_https"
         },
-        target_capability="qwen2.5-coder"
+        target_capability="qwen25_coder"
     )
     
     if single_result["status"] == "completed":
@@ -147,8 +142,8 @@ async def demo_basic_poetry_generation():
     print("   🔒 Security: JWT tokens in headers + HTTPS transport")
     
     workflow_steps = [
-        {"capability": "qwen2.5-coder", "task_type": "poem_generation"},
-        {"capability": "qwen3-coder", "task_type": "enhancement"}, 
+        {"capability": "qwen25_coder", "task_type": "poem_generation"},
+        {"capability": "qwen3_coder", "task_type": "enhancement"}, 
         {"capability": "mcp_storage", "task_type": "store"}
     ]
     
@@ -211,7 +206,7 @@ async def demo_basic_poetry_generation():
             "workflow_metadata": {
                 "steps_completed": len(workflow_result['results']),
                 "servers_used": list(servers_used),
-                "collaboration_type": "qwen2.5-coder_qwen3-coder_storage"
+                "collaboration_type": "qwen25_coder_qwen3_coder_storage"
             }
         }
         
@@ -233,13 +228,13 @@ async def demo_basic_poetry_generation():
     print("   Mode: Concurrent execution with basic authentication")
     
     parallel_result = await coordinator._handle_multi_server_collaboration(
-        participants=["qwen2.5-coder", "qwen3-coder"],
+        participants=["qwen25_coder", "qwen3_coder"],
         collaboration_type="parallel",
         data={
             "collaborative_theme": "Digital Transformation and Security Standards",
             "individual_prompts": {
-                "qwen2.5-coder": "Write about digital innovation from a technical perspective",
-                "qwen3-coder": "Write about digital security from an enterprise perspective"
+                "qwen25_coder": "Write about digital innovation from a technical perspective",
+                "qwen3_coder": "Write about digital security from an enterprise perspective"
             },
             "security_mode": "basic_parallel",
             "coordination_style": "independent_then_merge"

@@ -31,11 +31,13 @@ from typing import Dict, Any, Optional, List
 
 # Add parent directory to imports
 sys.path.append(str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # examples/ dir for _demo_support
 
 from smcp_mcp_bridge import MCPBridge, create_mindsdb_config, MCPServerType
 from smcp_config import SMCPConfig, ClusterConfig
 from smcp_distributed_a2a import DistributedA2AAgent, DistributedNodeRegistry
 from smcp_a2a import AgentInfo
+from _demo_support import demo_config, DEMO_MODEL
 import requests
 
 
@@ -51,7 +53,7 @@ class SMCPMindDBAgent(DistributedA2AAgent):
         print("   Integration: MindDB AI Database + Ollama Models")
         print("   Capabilities: SQL-ML, Time Series, NLP, Predictive Analytics")
     
-    async def connect_mindsdb(self, url: str = "http://localhost:47335", api_key: str = "demo_key"):
+    async def connect_mindsdb(self, url: str = "http://localhost:47334", api_key: str = "demo_key"):
         """Connect to MindDB server"""
         try:
             # Create MindDB configuration
@@ -59,7 +61,7 @@ class SMCPMindDBAgent(DistributedA2AAgent):
                 url=f"{url}/api",
                 api_key=api_key,
                 project="smcp_integration",
-                model="gpt-4",
+                model=DEMO_MODEL,
                 name="Primary MindDB Server"
             )
             
@@ -88,7 +90,7 @@ class SMCPMindDBAgent(DistributedA2AAgent):
                 payload = {"query": query}
                 
                 async with session.post(
-                    "http://localhost:47335/api/sql/query",
+                    "http://localhost:47334/api/sql/query",
                     json=payload,
                     headers={"Content-Type": "application/json"},
                     timeout=30
@@ -191,14 +193,14 @@ class SMCPMindDBAgent(DistributedA2AAgent):
         print("🧠 Step 2: Performing AI analysis with Qwen3 Coder 30B...")
         analysis_task = {
             "prompt": f"{analysis_prompt}\n\nData Context:\n{json.dumps(data_result.get('result', {}), indent=2)}",
-            "model": "qwen3-coder:30b-a3b-q4_K_M",
+            "model": DEMO_MODEL,
             "max_tokens": 1500,
             "temperature": 0.7
         }
         
         # Route to Qwen3 Coder through A2A
-        qwen3-coder_result = await self._handle_distributed_workflow(
-            workflow_steps=[{"capability": "qwen3-coder", "task_type": "business_analysis"}],
+        qwen3_coder_result = await self._handle_distributed_workflow(
+            workflow_steps=[{"capability": "qwen3_coder", "task_type": "business_analysis"}],
             input_data=analysis_task,
             routing_strategy="optimal"
         )
@@ -208,14 +210,14 @@ class SMCPMindDBAgent(DistributedA2AAgent):
             "status": "completed",
             "hybrid_analysis": {
                 "data_source": "postgresql_via_mindsdb",
-                "ai_analysis": "qwen3-coder_7b_business_intelligence",
+                "ai_analysis": "qwen3_coder_7b_business_intelligence",
                 "data_summary": data_result.get("result", {}),
-                "ai_insights": qwen3-coder_result.get("final_data", {}),
+                "ai_insights": qwen3_coder_result.get("final_data", {}),
                 "analysis_timestamp": datetime.now().isoformat()
             },
             "workflow_metadata": {
                 "data_query_time": data_result.get("mindsdb_metadata", {}).get("query_time"),
-                "ai_model_used": "qwen3-coder:30b-a3b-q4_K_M",
+                "ai_model_used": DEMO_MODEL,
                 "hybrid_processing": True,
                 "security_mode": "encrypted" if hasattr(self.config, 'crypto') and self.config.crypto.key_exchange == "ecdh" else "basic"
             }
@@ -255,14 +257,7 @@ async def demo_mindsdb_integration():
         print("   💡 Or use Docker: docker run -p 47334:47334 -p 47337:47337 mindsdb/mindsdb")
     
     # Create SMCP configuration
-    config = SMCPConfig(
-        mode="basic",
-        node_id="mindsdb_integration_demo",
-        server_url="ws://localhost:8765",
-        api_key="mindsdb_demo_key",
-        secret_key="mindsdb_demo_secret",
-        jwt_secret="mindsdb_jwt_secret"
-    )
+    config = demo_config("mindsdb_integration_demo", mode="basic")
     
     # Configure cluster for distributed AI
     config.cluster = ClusterConfig(
@@ -430,20 +425,20 @@ async def demo_mindsdb_integration():
         ollama_available = response.status_code == 200
         if ollama_available:
             models = response.json().get("models", [])
-            qwen3-coder_models = [m for m in models if "qwen3-coder" in m.get("name", "").lower()]
+            qwen3_coder_models = [m for m in models if "qwen3_coder" in m.get("name", "").lower()]
             print(f"   🤖 Ollama models available: {len(models)}")
-            print(f"   🔥 Qwen3 Coder models found: {len(qwen3-coder_models)}")
-            for model in qwen3-coder_models[:3]:
+            print(f"   🔥 Qwen3 Coder models found: {len(qwen3_coder_models)}")
+            for model in qwen3_coder_models[:3]:
                 print(f"      • {model.get('name', 'Unknown')}")
         else:
             print("   ❌ Ollama not available - hybrid analysis requires Ollama")
             print("   💡 Start Ollama: ollama serve")
-            print("   💡 Install models: ollama pull qwen3-coder:30b-a3b-q4_K_M")
+            print("   💡 Install models: ollama pull qwen3_coder:30b-a3b-q4_K_M")
             raise Exception("Hybrid analysis requires working Ollama server with Qwen3 Coder model")
     except Exception as e:
         print(f"   ❌ Ollama connection failed: {e}")
         print("   💡 Start Ollama: ollama serve")
-        print("   💡 Install models: ollama pull qwen3-coder:30b-a3b-q4_K_M")
+        print("   💡 Install models: ollama pull qwen3_coder:30b-a3b-q4_K_M")
         raise Exception(f"Hybrid analysis requires working Ollama server: {e}")
     
     # Query PostgreSQL data for analysis
@@ -499,7 +494,7 @@ async def demo_mindsdb_integration():
     else:
         print("   ❌ Hybrid analysis failed")
         print("   💡 Make sure both MindDB and Ollama are running correctly")
-        print("   💡 Check Qwen3 Coder model availability: ollama pull qwen3-coder:30b-a3b-q4_K_M")
+        print("   💡 Check Qwen3 Coder model availability: ollama pull qwen3_coder:30b-a3b-q4_K_M")
     
     # Demo 6: Real-time Analytics Dashboard Data
     print("\n6️⃣ Demo: Real-time Analytics Pipeline")

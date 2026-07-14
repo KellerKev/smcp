@@ -7,17 +7,28 @@ name = "smcp"
 version = "0.1.0"
 description = "Secure Model Context Protocol - MCP with authentication, per-message encryption, and multi-agent (A2A) coordination"
 requires-python = ">=3.11"
+# Compatible-release upper bounds so a future major release of a security-
+# critical dependency cannot silently change behaviour on install.
 dependencies = [
-    "websockets>=11.0",
-    "cryptography>=41.0",
-    "PyJWT>=2.8",
-    "pydantic>=2.0",
-    "pyyaml>=6.0",
-    "tomli>=2.0",
-    "tomli-w>=1.0",
-    "click>=8.1",
-    "requests>=2.31",
+    "websockets>=11.0,<16",
+    "cryptography>=41.0,<46",
+    "PyJWT>=2.8,<3",
+    "pydantic>=2.0,<3",
+    "pyyaml>=6.0,<7",
+    "tomli>=2.0,<3",
+    "tomli-w>=1.0,<2",
+    "click>=8.1,<9",
+    "requests>=2.31,<3",
 ]
+
+[project.optional-dependencies]
+# Needed by the (unpackaged) MCP bridge, distributed A2A, and DuckDB connector.
+bridge = ["aiohttp>=3.9,<4"]
+duckdb = ["duckdb>=0.9,<2"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [tool.setuptools]
 # Flat-layout repo: the protocol modules install as top-level modules so the

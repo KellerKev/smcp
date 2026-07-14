@@ -24,10 +24,12 @@ from typing import Dict, Any, Optional, List
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # examples/ dir for _demo_support
 
 from smcp_config import SMCPConfig, ClusterConfig
 from smcp_distributed_a2a import DistributedA2AAgent, DistributedNodeRegistry
 from smcp_a2a import AgentInfo
+from _demo_support import demo_config, DEMO_MODEL
 import requests
 
 
@@ -71,14 +73,7 @@ async def demo_basic_enterprise_features():
     print("=" * 80)
     
     # Create enterprise configuration (basic mode)
-    config = SMCPConfig(
-        mode="basic",
-        node_id="basic_enterprise_coordinator",
-        server_url="ws://localhost:8765",  # In prod: wss://enterprise-api.company.com
-        api_key="enterprise_api_key_123",
-        secret_key="enterprise_secret_key_2024",
-        jwt_secret="enterprise_jwt_secret_2024"
-    )
+    config = demo_config("basic_enterprise_coordinator", mode="basic")
     
     # Configure for enterprise-scale simulation
     config.cluster = ClusterConfig(
