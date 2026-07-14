@@ -16,13 +16,15 @@ from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 import secrets
 import jwt
 
-from scp_config import SCPConfig
-from scp_core import SCPMessage, MessageType
+# Canonical module names are smcp_config/smcp_core (the scp_* aliases never existed).
+from smcp_config import SCPConfig
+from smcp_core import SMCPMessage as SCPMessage, MessageType
 
 
 @dataclass
@@ -81,7 +83,8 @@ class FederatedAuthManager:
     def validate_client_jwt(self, jwt_token: str) -> Dict[str, Any]:
         """Validate client JWT token"""
         try:
-            payload = jwt.decode(jwt_token, self.jwt_secret, algorithms=['HS256'])
+            payload = jwt.decode(jwt_token, self.jwt_secret, algorithms=['HS256'],
+                                 options={"require": ["exp", "iat"]})
             
             # Check expiration
             if payload.get('exp', 0) < time.time():
@@ -226,17 +229,25 @@ class FederatedAuthManager:
         if existing_key and existing_key.expires_at > time.time():
             return existing_key
         
-        # For prototype, generate a shared key based on both nodes' info
-        # In production, this would involve actual ECDH key exchange over network
-        
-        # Create deterministic but ephemeral shared secret using canonical ordering
+        # Derive a per-node-pair key from the shared deployment secret via HKDF.
+        # Previously this hashed only public/guessable material (node ids, a JWT
+        # prefix, a coarse time bucket) with NO secret, so anyone could recompute
+        # the key. HKDF over the deployment secret makes it unrecoverable without
+        # that secret. (Full forward-secret ECDH is the P4 asymmetric redesign;
+        # this keeps the current shared-secret model but closes the disclosure.)
         node_a = min(self.node_id, peer_node_id)
         node_b = max(self.node_id, peer_node_id)
-        key_material = f"{node_a}:{node_b}:{client_jwt[:50]}:{time.time()//300}"  # 5-minute windows
-        shared_secret = hashlib.sha256(key_material.encode()).digest()
-        
+        secret = (getattr(self.config, "secret_key", "") or "").encode()
+        if not secret:
+            raise ValueError("secret_key must be set to negotiate a session key")
+        salt = (getattr(self.config, "kdf_salt", "") or "malgra-tunnel-v3").encode()
+        info = f"smcp-federated-session:{node_a}:{node_b}".encode()
+        session_secret = HKDF(
+            algorithm=hashes.SHA256(), length=32, salt=salt, info=info
+        ).derive(secret)
+
         session_key = SessionKey(
-            key=shared_secret[:32],  # 256-bit key for AES
+            key=session_secret,  # 256-bit key for AES
             node_a=node_a,
             node_b=node_b,
             created_at=time.time(),
@@ -250,12 +261,14 @@ class FederatedAuthManager:
         return session_key
     
     def encrypt_with_session_key(self, data: Dict[str, Any], session_key: SessionKey) -> Dict[str, Any]:
-        """Encrypt data using session key"""
-        
-        # Increment nonce counter
-        session_key.nonce_counter += 1
-        nonce = session_key.nonce_counter.to_bytes(12, byteorder='big')
-        
+        """Encrypt data using session key.
+
+        Uses a fresh random 96-bit nonce per message. The previous shared,
+        per-writer counter (both peers starting at 0 under the same key) caused
+        catastrophic AES-GCM nonce reuse; a random nonce removes that entirely.
+        """
+        nonce = secrets.token_bytes(12)
+
         # Serialize data
         plaintext = json.dumps(data).encode()
         

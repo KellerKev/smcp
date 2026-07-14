@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 import base64
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 class MessageType(Enum):
@@ -76,11 +76,53 @@ class Capability:
 class SMCPSecurity:
     """Handles encryption and authentication"""
     
-    def __init__(self, secret_key: str, jwt_secret: str, kdf_salt: str = ""):
+    def __init__(self, secret_key: str, jwt_secret: str, kdf_salt: str = "",
+                 jwt_algorithm: str = "HS256",
+                 jwt_private_key_path: Optional[str] = None,
+                 jwt_public_key_path: Optional[str] = None):
         self.secret_key = secret_key.encode()
         self.jwt_secret = jwt_secret
         self.kdf_salt = kdf_salt
         self._setup_keys()
+        self._setup_jwt(jwt_algorithm, jwt_private_key_path, jwt_public_key_path)
+
+    def _setup_jwt(self, algorithm, private_key_path, public_key_path):
+        """Configure JWT signing/verification.
+
+        HS256 (default): a shared symmetric secret — every holder can BOTH mint and
+        verify tokens, so it cannot establish per-node identity. Kept for
+        backward-compatible single-trust-domain use.
+
+        RS256: asymmetric. The server loads a PRIVATE key and can mint tokens;
+        clients load only the PUBLIC key and can verify but NOT forge them. This
+        is the production-recommended mode: a client can no longer escalate its
+        own permissions by minting a token, because it doesn't hold the signer.
+        """
+        self.jwt_algorithm = algorithm
+        self.jwt_signing_key = None      # private key (server) or shared secret
+        self.jwt_verify_key = None       # public key (client/server) or shared secret
+        if algorithm == "HS256":
+            self.jwt_signing_key = self.jwt_secret
+            self.jwt_verify_key = self.jwt_secret
+            return
+        if algorithm not in ("RS256", "ES256", "EdDSA"):
+            raise ValueError(f"Unsupported jwt_algorithm: {algorithm}")
+        from cryptography.hazmat.primitives import serialization as _ser
+        if private_key_path:
+            with open(private_key_path, "rb") as f:
+                self.jwt_signing_key = _ser.load_pem_private_key(f.read(), password=None)
+        if public_key_path:
+            with open(public_key_path, "rb") as f:
+                self.jwt_verify_key = _ser.load_pem_public_key(f.read())
+        elif self.jwt_signing_key is not None:
+            # Derive the public verify key from the private key when only the
+            # private key was provided (server that both signs and verifies).
+            self.jwt_verify_key = self.jwt_signing_key.public_key()
+        if self.jwt_signing_key is None and self.jwt_verify_key is None:
+            raise ValueError(
+                f"{algorithm} requires jwt_private_key_path (to sign) and/or "
+                f"jwt_public_key_path (to verify)"
+            )
 
     def _setup_keys(self):
         """v3 key derivation (matches malgra-tunnel/src/protocol.rs + docs/SMCP_PROTOCOL.md):
@@ -97,9 +139,10 @@ class SMCPSecurity:
         json_payload = json.dumps(payload).encode()
         return self.cipher.encrypt(json_payload).decode()
 
-    def decrypt_payload(self, encrypted_payload: str) -> Dict[str, Any]:
-        """Decrypt message payload"""
-        decrypted = self.cipher.decrypt(encrypted_payload.encode())
+    def decrypt_payload(self, encrypted_payload: str, ttl: Optional[int] = None) -> Dict[str, Any]:
+        """Decrypt message payload. When ttl is given, Fernet rejects tokens
+        older than ttl seconds (defence-in-depth against replay of stale data)."""
+        decrypted = self.cipher.decrypt(encrypted_payload.encode(), ttl=ttl)
         return json.loads(decrypted.decode())
 
     @staticmethod
@@ -129,20 +172,40 @@ class SMCPSecurity:
         expected = self.sign_message(message)
         return hmac.compare_digest(expected, message.signature)
     
+    # Issuer/audience bind a token to this protocol, so a token minted for some
+    # other purpose under the same signing key is not accepted here.
+    JWT_ISSUER = "smcp"
+    JWT_AUDIENCE = "smcp"
+
     def generate_jwt(self, client_id: str, permissions: List[str]) -> str:
-        """Generate JWT token"""
+        """Generate a JWT. Requires a signing key; in RS256 mode a client that
+        holds only the public key cannot mint tokens (raises)."""
+        if self.jwt_signing_key is None:
+            raise ValueError(
+                "This node has no JWT signing key (verify-only). It cannot mint "
+                "tokens; only the server holding the private key can."
+            )
+        now = datetime.now(timezone.utc)
         payload = {
             "client_id": client_id,
             "permissions": permissions,
-            "exp": datetime.utcnow() + timedelta(hours=1),
-            "iat": datetime.utcnow()
+            "iss": self.JWT_ISSUER,
+            "aud": self.JWT_AUDIENCE,
+            "exp": now + timedelta(hours=1),
+            "iat": now,
         }
-        return jwt.encode(payload, self.jwt_secret, algorithm="HS256")
-    
+        return jwt.encode(payload, self.jwt_signing_key, algorithm=self.jwt_algorithm)
+
     def verify_jwt(self, token: str) -> Optional[Dict[str, Any]]:
-        """Verify JWT token"""
+        """Verify JWT token, enforcing algorithm, expiry, issuer and audience."""
+        if self.jwt_verify_key is None:
+            return None
         try:
-            return jwt.decode(token, self.jwt_secret, algorithms=["HS256"])
+            return jwt.decode(
+                token, self.jwt_verify_key, algorithms=[self.jwt_algorithm],
+                audience=self.JWT_AUDIENCE, issuer=self.JWT_ISSUER,
+                options={"require": ["exp", "iat"]},
+            )
         except jwt.InvalidTokenError:
             return None
 
@@ -150,12 +213,28 @@ class SMCPSecurity:
 class SMCPNode:
     """Core SCP node that can act as client or server"""
     
-    def __init__(self, node_id: str, secret_key: str = "default_secret", jwt_secret: str = "default_jwt", kdf_salt: str = ""):
+    def __init__(self, node_id: str, secret_key: str = "", jwt_secret: str = "",
+                 kdf_salt: str = "", api_key: str = "", jwt_algorithm: str = "HS256",
+                 jwt_private_key_path: Optional[str] = None,
+                 jwt_public_key_path: Optional[str] = None):
+        # No insecure built-in defaults: empty secrets are caught by
+        # SMCPConfig.validate() at startup, and _handle_auth fails closed when
+        # api_key is unset. Never ship guessable "default_*" credentials.
         self.node_id = node_id
-        self.security = SMCPSecurity(secret_key, jwt_secret, kdf_salt)
+        self.api_key = api_key
+        self.security = SMCPSecurity(
+            secret_key, jwt_secret, kdf_salt,
+            jwt_algorithm=jwt_algorithm,
+            jwt_private_key_path=jwt_private_key_path,
+            jwt_public_key_path=jwt_public_key_path,
+        )
         self.capabilities: Dict[str, Capability] = {}
         self.tool_handlers: Dict[str, Callable] = {}
         self.auth_tokens: Dict[str, Dict[str, Any]] = {}
+        # Replay protection: accept a message only once and only within a freshness
+        # window. Maps message id -> timestamp; pruned as it grows.
+        self.replay_window_seconds = 300
+        self._seen_message_ids: Dict[str, float] = {}
         
     def register_capability(self, capability: Capability, handler: Callable):
         """Register a tool capability"""
@@ -178,16 +257,42 @@ class SMCPNode:
         message.signature = self.security.sign_message(message)
         return message
     
+    def _check_and_record_replay(self, message: SMCPMessage) -> bool:
+        """Return True if the message is fresh and unseen; record it. Reject stale
+        or duplicate messages (replay protection)."""
+        now = time.time()
+        # Freshness: timestamp must be within +/- the replay window.
+        if abs(now - float(message.timestamp)) > self.replay_window_seconds:
+            return False
+        # Uniqueness: reject a message id we've already accepted.
+        if message.id in self._seen_message_ids:
+            return False
+        # Prune expired ids opportunistically, then record this one.
+        if len(self._seen_message_ids) > 10000:
+            cutoff = now - self.replay_window_seconds
+            self._seen_message_ids = {
+                mid: ts for mid, ts in self._seen_message_ids.items() if ts >= cutoff
+            }
+        self._seen_message_ids[message.id] = now
+        return True
+
     def process_message(self, message: SMCPMessage) -> Optional[SMCPMessage]:
         """Process incoming message"""
         if not self.security.verify_signature(message):
             return self.create_error_response(message.id, "Invalid signature")
-        
+
+        # Reject stale or replayed messages before doing any further work.
+        if not self._check_and_record_replay(message):
+            return self.create_error_response(message.id, "Stale or replayed message rejected")
+
         if message.encrypted and "encrypted_data" in message.payload:
             try:
-                message.payload = self.security.decrypt_payload(message.payload["encrypted_data"])
-            except Exception as e:
-                return self.create_error_response(message.id, f"Decryption failed: {str(e)}")
+                message.payload = self.security.decrypt_payload(
+                    message.payload["encrypted_data"], ttl=self.replay_window_seconds
+                )
+            except Exception:
+                self._log_internal_error("decrypt_payload")
+                return self.create_error_response(message.id, "Decryption failed")
         
         if message.type == MessageType.HANDSHAKE:
             return self._handle_handshake(message)
@@ -214,21 +319,31 @@ class SMCPNode:
         })
     
     def _handle_auth(self, message: SMCPMessage) -> SMCPMessage:
-        """Handle authentication"""
-        api_key = message.payload.get("api_key")
-        if api_key == "demo_key_123":  # Simple demo auth
-            token = self.security.generate_jwt("demo_client", ["tool_invoke", "discovery"])
-            self.auth_tokens[token] = {
-                "client_id": "demo_client",
-                "permissions": ["tool_invoke", "discovery"],
-                "expires": time.time() + 3600
-            }
-            return self.create_message(MessageType.AUTH, {
-                "status": "success",
-                "token": token,
-                "expires_in": 3600
-            })
-        return self.create_error_response(message.id, "Authentication failed")
+        """Handle authentication against the configured API key.
+
+        The key is compared in constant time. There is deliberately no hardcoded
+        fallback credential: a node with no ``api_key`` set cannot authenticate
+        anyone (fail closed). The client id is taken from the caller but the
+        granted permissions are least-privilege and fixed here, not caller-chosen.
+        """
+        api_key = message.payload.get("api_key") or ""
+        expected = self.api_key or ""
+        if not expected or not hmac.compare_digest(str(api_key), str(expected)):
+            return self.create_error_response(message.id, "Authentication failed")
+
+        client_id = str(message.payload.get("client_id", "client"))
+        permissions = ["tool_invoke", "discovery"]
+        token = self.security.generate_jwt(client_id, permissions)
+        self.auth_tokens[token] = {
+            "client_id": client_id,
+            "permissions": permissions,
+            "expires": time.time() + 3600
+        }
+        return self.create_message(MessageType.AUTH, {
+            "status": "success",
+            "token": token,
+            "expires_in": 3600
+        })
     
     def _handle_capability_discovery(self, message: SMCPMessage) -> SMCPMessage:
         """Handle capability discovery"""
@@ -250,16 +365,29 @@ class SMCPNode:
         })
     
     def _handle_tool_invoke(self, message: SMCPMessage) -> SMCPMessage:
-        """Handle tool invocation"""
-        if not self._is_authorized(message.payload.get("token"), "tool_invoke"):
-            return self.create_error_response(message.id, "Unauthorized")
-        
+        """Handle tool invocation with per-tool authorization + parameter validation."""
         tool_name = message.payload.get("tool_name")
         parameters = message.payload.get("parameters", {})
-        
+
         if tool_name not in self.tool_handlers:
             return self.create_error_response(message.id, f"Tool '{tool_name}' not found")
-        
+
+        capability = self.capabilities.get(tool_name)
+        # Per-tool authorization: a token must carry either the tool-specific
+        # scope `tool:<name>` or the broad `tool_invoke` scope. Tools that opt out
+        # (auth_required=False) may be called without a token.
+        if capability is None or capability.auth_required:
+            token = message.payload.get("token")
+            if not (self._is_authorized(token, f"tool:{tool_name}")
+                    or self._is_authorized(token, "tool_invoke")):
+                return self.create_error_response(message.id, "Unauthorized")
+
+        # Validate parameters against the declared capability schema before dispatch.
+        if capability is not None:
+            error = self._validate_parameters(parameters, capability.parameters)
+            if error:
+                return self.create_error_response(message.id, f"Invalid parameters: {error}")
+
         try:
             result = self.tool_handlers[tool_name](**parameters)
             return self.create_message(MessageType.TOOL_RESPONSE, {
@@ -267,8 +395,68 @@ class SMCPNode:
                 "result": result,
                 "status": "success"
             })
-        except Exception as e:
-            return self.create_error_response(message.id, f"Tool execution failed: {str(e)}")
+        except TypeError as e:
+            # Argument-shape mismatch is a client error; keep it specific.
+            return self.create_error_response(message.id, f"Invalid parameters: {str(e)}")
+        except Exception:
+            # Do not leak internal exception detail to the caller.
+            self._log_internal_error(tool_name)
+            return self.create_error_response(message.id, "Tool execution failed")
+
+    @staticmethod
+    def _validate_parameters(parameters: Dict[str, Any], schema: Dict[str, Any]) -> Optional[str]:
+        """Lightweight validation of caller parameters against a capability schema.
+
+        Rejects unexpected keys and checks declared JSON types / enum membership
+        on the parameters that ARE supplied. Required-ness is only enforced when
+        the schema declares it explicitly via a top-level ``required`` list
+        (JSON-Schema style); absence of a ``default`` is NOT treated as required,
+        because these capability schemas don't follow that convention and the
+        handlers supply their own defaults. Returns an error string, or None.
+        """
+        if not isinstance(parameters, dict):
+            return "parameters must be an object"
+
+        # Support an optional JSON-Schema-style {"required": [...]} declaration.
+        required = schema.get("required") if isinstance(schema, dict) else None
+        prop_schema = {k: v for k, v in schema.items() if k != "required"} \
+            if isinstance(required, list) else schema
+
+        allowed = set(prop_schema.keys())
+        extra = set(parameters.keys()) - allowed
+        if extra:
+            return f"unexpected parameter(s): {', '.join(sorted(extra))}"
+
+        if isinstance(required, list):
+            missing = [r for r in required if r not in parameters]
+            if missing:
+                return f"missing required parameter(s): {', '.join(missing)}"
+
+        _JSON_TYPES = {
+            "string": str, "number": (int, float), "integer": int,
+            "boolean": bool, "object": dict, "array": list,
+        }
+        for name, value in parameters.items():
+            spec = prop_schema.get(name)
+            if not isinstance(spec, dict):
+                continue
+            declared = spec.get("type")
+            py_type = _JSON_TYPES.get(declared)
+            # bool is a subclass of int; guard against accepting True as a number
+            if py_type and (not isinstance(value, py_type)
+                            or (declared in ("number", "integer") and isinstance(value, bool))):
+                return f"parameter '{name}' must be of type {declared}"
+            enum = spec.get("enum")
+            if enum is not None and value not in enum:
+                return f"parameter '{name}' must be one of {enum}"
+        return None
+
+    def _log_internal_error(self, context: str) -> None:
+        """Hook for logging internal errors without exposing them to callers."""
+        import logging, traceback
+        logging.getLogger("smcp_core").error(
+            "Internal error handling '%s': %s", context, traceback.format_exc()
+        )
     
     def _handle_heartbeat(self, message: SMCPMessage) -> SMCPMessage:
         """Handle heartbeat"""

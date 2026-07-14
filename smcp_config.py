@@ -99,6 +99,22 @@ class SecurityConfig:
     max_message_size: int = 1048576  # 1MB
     token_expiry: int = 3600  # 1 hour
     rate_limit: int = 100  # requests per minute
+    max_connections: int = 100  # concurrent connection cap
+    # Transport security (TLS). When tls_enabled is True the server serves wss://
+    # and the client/bridge require TLS with certificate verification.
+    tls_enabled: bool = False
+    tls_cert_path: Optional[str] = None
+    tls_key_path: Optional[str] = None
+    tls_ca_path: Optional[str] = None  # CA bundle for verifying peers (optional)
+    # Escape hatch for local development ONLY: permit plaintext ws://http:// when
+    # the peer host is loopback. Never allows plaintext to a remote host.
+    allow_insecure_transit: bool = False
+    # JWT signing. HS256 (default) uses the shared jwt_secret — any holder can mint
+    # tokens. RS256 with a server-held private key + client public key means clients
+    # can verify but cannot forge tokens (recommended for multi-party deployments).
+    jwt_algorithm: str = "HS256"
+    jwt_private_key_path: Optional[str] = None  # server: sign
+    jwt_public_key_path: Optional[str] = None   # client/server: verify
 
 
 @dataclass
@@ -328,7 +344,7 @@ class SMCPConfig:
         merged = cls()
         
         # Copy all fields from base
-        for field_name in ['node_id', 'server_url', 'api_key', 'secret_key', 'jwt_secret', 'kdf_salt']:
+        for field_name in ['node_id', 'server_url', 'api_key', 'secret_key', 'jwt_secret', 'kdf_salt', 'mode']:
             setattr(merged, field_name, getattr(base, field_name))
         
         # Copy nested configurations
@@ -350,7 +366,11 @@ class SMCPConfig:
             merged.secret_key = override.secret_key
         if override.jwt_secret != cls().jwt_secret:
             merged.jwt_secret = override.jwt_secret
-        
+        if override.kdf_salt != cls().kdf_salt:
+            merged.kdf_salt = override.kdf_salt
+        if override.mode != cls().mode:
+            merged.mode = override.mode
+
         # Override nested configurations
         for attr in ['host', 'port', 'max_connections', 'ping_interval', 'ping_timeout']:
             if getattr(override.server, attr) != getattr(ServerConfig(), attr):
@@ -435,28 +455,76 @@ class SMCPConfig:
         if not self.server_url:
             issues.append("server_url cannot be empty")
         
+        # Every credential-shaped string that has ever been published in this
+        # repo (defaults, examples, dev setup scripts, docs). A deployment using
+        # any of these has a publicly-known secret, so reject them outright.
+        _PUBLISHED_SECRETS = {
+            "", "default_secret_key", "default_jwt_secret", "default_secret",
+            "default_jwt", "demo_key_123", "my_secret_key_2024",
+            "dev_jwt_secret_2024", "demo_secret_2024", "enterprise_key_abc123",
+            "your_secure_api_key_here", "your_encryption_secret_key_here",
+            "your_jwt_signing_secret_here",
+        }
+        _MIN_SECRET_LEN = 32  # ~256 bits when using token_urlsafe(32)
+
+        # Obvious placeholder prefixes shipped in examples/.env.example — reject so
+        # a copy-paste deployment cannot run with a non-secret "secret".
+        _PLACEHOLDER_PREFIXES = ("CHANGE_ME", "your_", "your-", "changeme")
+
+        def _is_placeholder(value: str) -> bool:
+            return any(value.lower().startswith(p.lower()) for p in _PLACEHOLDER_PREFIXES)
+
+        def _check_secret(value: str, name: str, env: str, purpose: str):
+            if _is_placeholder(value):
+                issues.append(
+                    f"{name} is still a placeholder value; set a real per-deployment "
+                    f"secret ({env})"
+                )
+                return
+            if value in _PUBLISHED_SECRETS:
+                issues.append(
+                    f"{name} must be set to a strong per-deployment value ({env}); "
+                    f"the configured value is empty or publicly known and lets "
+                    f"anyone {purpose}"
+                )
+            elif len(value) < _MIN_SECRET_LEN:
+                issues.append(
+                    f"{name} is too short ({len(value)} chars); use at least "
+                    f"{_MIN_SECRET_LEN} chars, e.g. "
+                    f"python -c \"import secrets;print(secrets.token_urlsafe(32))\""
+                )
+
         if not self.api_key:
             issues.append("api_key cannot be empty")
-        
-        # Reject empty AND the historically-shipped default values. Those
-        # constants were published in this repo, so a deployment using them
-        # has a publicly-known channel secret (keys derivable from it) and a
-        # publicly-known JWT signing key (auth tokens forgeable by anyone).
-        _INSECURE_SECRET_DEFAULTS = {"", "default_secret_key"}
-        _INSECURE_JWT_DEFAULTS = {"", "default_jwt_secret"}
-        if self.secret_key in _INSECURE_SECRET_DEFAULTS:
+        elif _is_placeholder(self.api_key):
             issues.append(
-                "secret_key must be set to a strong per-deployment value "
-                "(SCP_SECRET_KEY); the built-in default is publicly known and "
-                "lets anyone derive the channel encryption/MAC keys"
+                "api_key is still a placeholder value; set a real per-deployment "
+                "value (SCP_API_KEY)"
             )
-        if self.jwt_secret in _INSECURE_JWT_DEFAULTS:
+        elif self.api_key in _PUBLISHED_SECRETS:
             issues.append(
-                "jwt_secret must be set to a strong per-deployment value "
-                "(SCP_JWT_SECRET); the built-in default is publicly known and "
-                "lets anyone forge authentication tokens"
+                "api_key must be set to a strong per-deployment value (SCP_API_KEY); "
+                "the configured value is publicly known and lets anyone authenticate"
             )
-        
+
+        _check_secret(self.secret_key, "secret_key", "SCP_SECRET_KEY",
+                      "derive the channel encryption/MAC keys")
+        _check_secret(self.jwt_secret, "jwt_secret", "SCP_JWT_SECRET",
+                      "forge authentication tokens")
+
+        # v3 KDF salt: an empty salt silently falls back to the global hardcoded
+        # constant, which defeats per-deployment key separation and enables
+        # cross-deployment precomputation on the secret.
+        if not self.kdf_salt:
+            issues.append(
+                "kdf_salt must be set to a per-deployment value (SCP_KDF_SALT); "
+                "an empty salt falls back to a publicly-known constant"
+            )
+        elif len(self.kdf_salt) < 16:
+            issues.append(
+                f"kdf_salt is too short ({len(self.kdf_salt)} chars); use at least 16 chars"
+            )
+
         if self.server.port < 1 or self.server.port > 65535:
             issues.append(f"server.port must be between 1-65535, got {self.server.port}")
         
@@ -475,6 +543,63 @@ class SMCPConfig:
 SCPConfig = SMCPConfig
 
 
+def _host_is_loopback(host: Optional[str]) -> bool:
+    return host in ("localhost", "127.0.0.1", "::1", "", None)
+
+
+def enforce_secure_url(url: str, allow_insecure: bool = False) -> None:
+    """Raise unless ``url`` is TLS, or plaintext is explicitly allowed to loopback.
+
+    Plaintext (ws://, http://) is only ever permitted when allow_insecure is set
+    AND the target host is loopback. A plaintext URL to a remote host always raises.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "").lower()
+    if scheme in ("wss", "https"):
+        return
+    if scheme in ("ws", "http"):
+        if allow_insecure and _host_is_loopback(parsed.hostname):
+            return
+        raise ValueError(
+            f"Refusing plaintext transport to '{url}'. Use wss://https:// (set "
+            f"security.tls_enabled), or set security.allow_insecure_transit for a "
+            f"loopback target only."
+        )
+    raise ValueError(f"Unsupported URL scheme in '{url}'")
+
+
+def build_server_ssl_context(config: 'SMCPConfig'):
+    """Build a server-side SSLContext from config, or None if TLS is disabled."""
+    import ssl
+    sec = config.security
+    if not sec.tls_enabled:
+        return None
+    if not sec.tls_cert_path or not sec.tls_key_path:
+        raise ValueError("tls_enabled is set but tls_cert_path/tls_key_path are missing")
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(certfile=sec.tls_cert_path, keyfile=sec.tls_key_path)
+    if sec.tls_ca_path:  # enable mutual TLS if a CA bundle is provided
+        ctx.load_verify_locations(cafile=sec.tls_ca_path)
+        ctx.verify_mode = ssl.CERT_REQUIRED
+    return ctx
+
+
+def build_client_ssl_context(config: 'SMCPConfig'):
+    """Build a client-side SSLContext with verification on, or None if TLS is off."""
+    import ssl
+    sec = config.security
+    if not sec.tls_enabled:
+        return None
+    ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH,
+                                     cafile=sec.tls_ca_path or None)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.check_hostname = True
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    return ctx
+
+
 def create_default_config(config_path: str = "scp_config.toml"):
     """Create a default configuration file.
 
@@ -485,12 +610,14 @@ def create_default_config(config_path: str = "scp_config.toml"):
     import secrets as _secrets
 
     config = SCPConfig()
+    config.api_key = _secrets.token_urlsafe(32)
     config.secret_key = _secrets.token_urlsafe(32)
     config.jwt_secret = _secrets.token_urlsafe(32)
+    config.kdf_salt = _secrets.token_urlsafe(16)
     config.to_file(config_path, format='toml')
     print(f"✓ Created default configuration: {config_path}")
-    print("  Generated fresh secret_key and jwt_secret; share them across nodes "
-          "for federation.")
+    print("  Generated fresh api_key, secret_key, jwt_secret and kdf_salt; "
+          "share secret_key/jwt_secret/kdf_salt across nodes for federation.")
 
 
 def get_common_args() -> argparse.ArgumentParser:

@@ -331,19 +331,26 @@ class FilesystemConnector(SMCPConnectorBase):
         # Validate file extension
         if file_format not in self.allowed_extensions:
             raise Exception(f"File format not allowed: {file_format}")
-        
+
+        # Enforce a write size cap (mirrors the read-side max_file_size) so a
+        # caller cannot fill the disk with a single unbounded write.
+        if isinstance(content, (dict, list)):
+            serialized = json.dumps(content, indent=2, ensure_ascii=False)
+        else:
+            serialized = str(content)
+        byte_len = len(serialized.encode(encoding, errors="replace"))
+        if byte_len > self.max_file_size:
+            raise Exception(
+                f"Content too large: {byte_len} bytes exceeds max_file_size "
+                f"({self.max_file_size} bytes)"
+            )
+
         # Create parent directories
         full_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Write file
-        if isinstance(content, (dict, list)):
-            # JSON content
-            with open(full_path, 'w', encoding=encoding) as f:
-                json.dump(content, f, indent=2, ensure_ascii=False)
-        else:
-            # Text content
-            with open(full_path, 'w', encoding=encoding) as f:
-                f.write(str(content))
+        with open(full_path, 'w', encoding=encoding) as f:
+            f.write(serialized)
         
         # Get file stats
         stats = full_path.stat()
@@ -564,13 +571,17 @@ class FilesystemConnector(SMCPConnectorBase):
         if ".." in path.parts:
             raise Exception("Parent directory references not allowed")
         
-        # Resolve full path
+        # Resolve full path (follows symlinks) and the base directory.
+        base_resolved = self.base_path.resolve()
         full_path = (self.base_path / path).resolve()
-        
-        # Ensure path is within base_path
-        if not str(full_path).startswith(str(self.base_path.resolve())):
+
+        # Ensure the resolved path is genuinely inside base_path. Using
+        # is_relative_to (not string startswith) avoids the sibling-prefix bypass
+        # where "/data-evil" would match a base of "/data"; resolve() above also
+        # collapses any symlink that points outside the base.
+        if full_path != base_resolved and base_resolved not in full_path.parents:
             raise Exception("Path outside base directory not allowed")
-        
+
         return full_path
 
 # Convenience function for common filesystem operations

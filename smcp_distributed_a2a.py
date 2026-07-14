@@ -7,6 +7,7 @@ Includes localhost simulation for development and testing
 
 import asyncio
 import json
+import os
 import uuid
 import time
 import logging
@@ -91,49 +92,47 @@ class DistributedNodeRegistry:
         
         # Configure nodes based on available models
         node_configs = []
-        
-        # Node 1: Qwen 2.5 Coder for fast responses
-        if "qwen2.5-coder:7b-instruct-q4_K_M" in available_models or "qwen2.5-coder:7b-instruct-q4_K_M" in available_models or "tinyllama:1.1b" in available_models:
+
+        def _pick_model(preferred):
+            """Return the first preferred model that's installed, else the demo
+            model, else any available model. Keeps the simulation working no
+            matter which specific models a machine happens to have pulled."""
+            for m in preferred:
+                if m in available_models:
+                    return m
+            demo = os.getenv("SMCP_DEMO_MODEL", "llama3.2:1b")
+            if demo in available_models:
+                return demo
+            return available_models[0] if available_models else None
+
+        # Node 1: fast/creative generation (advertises the "tinyllama" capability
+        # that the demos route to). Uses a real model if the preferred one is
+        # absent, so routing succeeds on any Ollama install.
+        node_1_model = _pick_model([
+            "qwen2.5-coder:7b-instruct-q4_K_M", "tinyllama:1.1b", "tinyllama:latest",
+        ])
+        if node_1_model:
             node_configs.append({
                 "node_id": "gpu_server_1",
                 "host": "localhost",
                 "port": self.config.simulate_ports[0] if len(self.config.simulate_ports) > 0 else 8766,
                 "capabilities": ["tinyllama", "initial_generation", "creative_writing", "fast_response"],
                 "metadata": {
-                    "gpu_memory": "24GB", 
-                    "models": ["qwen2.5-coder:7b-instruct-q4_K_M"],
+                    "gpu_memory": "24GB",
+                    "models": [node_1_model],
                     "response_time": "fast",
                     "specialization": "Quick creative text generation"
                 }
             })
-        
-        # Node 2: Mistral or larger model for enhancement - with robust fallbacks
-        mistral_model = None
-        node_2_capabilities = []
-        node_2_model = None
-        
-        # First, try to find Qwen3 or Mistral models
-        for model in ["qwen3-coder:30b-a3b-q4_K_M", "qwen3:30b-instruct", "qwen3:14b-q4_K_M", "qwen3-coder:30b-a3b-q4_K_M", "mistral-nemo:12b", "mistral-small:24b-instruct-2501-q4_K_M"]:
-            if model in available_models:
-                mistral_model = model
-                node_2_capabilities = ["mistral", "enhancement", "literary_refinement", "analysis"]
-                node_2_model = model
-                break
-        
-        # If no Mistral, try other good models for enhancement
-        if not mistral_model:
-            for model in ["llama3.2:latest", "qwen3:8b-q4_K_M", "qwen3:14b-q4_K_M", "gemma3:27b-it-q4_K_M"]:
-                if model in available_models:
-                    node_2_capabilities = ["mistral", "enhancement", "literary_refinement", "analysis", "llama"]  # Include mistral capability for compatibility
-                    node_2_model = model
-                    break
-        
-        # If still no model, use Qwen as fallback for enhancement
-        if not node_2_model and ("qwen2.5-coder:7b-instruct-q4_K_M" in available_models or "qwen2.5-coder:7b-instruct-q4_K_M" in available_models):
-            node_2_capabilities = ["mistral", "enhancement", "literary_refinement", "analysis", "tinyllama"]  # Include mistral capability for compatibility
-            node_2_model = "qwen2.5-coder:7b-instruct-q4_K_M" if "qwen2.5-coder:7b-instruct-q4_K_M" in available_models else "qwen2.5-coder:7b-instruct-q4_K_M"
-        
-        # Always create the second node with some capability
+
+        # Node 2: enhancement/analysis (advertises the "mistral" capability the
+        # demos route to), again falling back to any available model.
+        node_2_model = _pick_model([
+            "qwen3-coder:30b-a3b-q4_K_M", "qwen3:30b-instruct", "qwen3:14b-q4_K_M",
+            "mistral-nemo:12b", "mistral:latest", "llama3.2:latest",
+        ])
+        node_2_capabilities = ["mistral", "enhancement", "literary_refinement", "analysis", "llama"]
+        mistral_model = node_2_model
         if node_2_model:
             node_configs.append({
                 "node_id": "gpu_server_2", 
@@ -561,28 +560,25 @@ class DistributedA2AAgent(SMCPAgent):
             return self.cluster_registry.get_best_node_for_capability(capability)
     
     async def _send_cross_server_request(self, target_node: DistributedNode, task_data: Dict[str, Any]) -> Any:
-        """Send secure encrypted request to another server"""
+        """Route a task to another node.
+
+        Two distinct paths, honestly labelled:
+        - simulate_distributed: an in-process localhost simulation. There is no
+          network transit, so nothing is (or needs to be) transit-encrypted.
+        - real: an actual network call, which encrypts the payload with the shared
+          authenticated cipher and requires TLS (see _real_cross_server_request).
+        """
         try:
-            # Show encrypted A2A communication in transit
-            print(f"🔐 Encrypting A2A message for transit to {target_node.node_id}")
-            print(f"   Authentication: JWT + OAuth2")
-            print(f"   Transit Encryption: AES-256-GCM")
-            print(f"   Message Integrity: HMAC-SHA256")
-            
-            # Encrypt task data for transit using enhanced security
-            encrypted_task = await self._encrypt_task_for_transit(task_data, target_node)
-            print(f"   ✓ Message encrypted for secure transit")
-            
             if self.cluster_registry.config.simulate_distributed:
-                # Simulate cross-server communication for localhost testing
-                result = await self._simulate_cross_server_request(target_node, encrypted_task)
-            else:
-                # Real cross-server communication
-                result = await self._real_cross_server_request(target_node, encrypted_task)
-            
-            print(f"   ✓ Received encrypted response, decrypting...")
-            return result
-                
+                self.logger.info(
+                    f"Local in-process simulation to {target_node.node_id} "
+                    f"(no network transit; not transit-encrypted)"
+                )
+                return await self._simulate_cross_server_request(target_node, task_data)
+
+            self.logger.info(f"Sending encrypted cross-server request to {target_node.node_id}")
+            return await self._real_cross_server_request(target_node, task_data)
+
         except Exception as e:
             self.logger.error(f"Cross-server request to {target_node.node_id} failed: {e}")
             raise
@@ -766,28 +762,41 @@ class DistributedA2AAgent(SMCPAgent):
         }
     
     async def _real_cross_server_request(self, target_node: DistributedNode, task_data: Dict[str, Any]) -> Any:
-        """Real cross-server request using SCP protocol"""
-        # TODO: Implement full SCP protocol communication
-        # This would involve:
-        # 1. Establishing secure WebSocket connection
-        # 2. Authentication/key exchange
-        # 3. Encrypted message exchange
-        # 4. Result processing
-        
+        """Real cross-server request over TLS with an encrypted, authenticated payload.
+
+        Fails closed rather than degrading to plaintext: if no real cipher is
+        available, or if the target is not reachable over TLS, this raises instead
+        of silently POSTing cleartext (the previous behaviour advertised
+        AES-256-GCM while sending plaintext over http://).
+        """
         import aiohttp
-        
-        async with aiohttp.ClientSession() as session:
-            url = f"http://{target_node.host}:{target_node.port}/api/task"
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {await self._get_cross_server_token(target_node)}"
-            }
-            
-            async with session.post(url, json=task_data, headers=headers) as response:
-                if response.status == 200:
-                    return await response.json()
-                else:
+
+        envelope = self._encrypt_task_for_transit(task_data)
+        token = await self._get_cross_server_token(target_node)
+
+        # Require TLS. Plaintext transit is only permitted for an explicit
+        # loopback target, never for a remote host.
+        from smcp_config import enforce_secure_url, build_client_ssl_context
+        import ssl as _ssl
+        allow_insecure = bool(self.config.security.allow_insecure_transit)
+        host = target_node.host
+        scheme = "https" if self.config.security.tls_enabled else "http"
+        url = f"{scheme}://{host}:{target_node.port}/api/task"
+        enforce_secure_url(url, allow_insecure=allow_insecure)
+
+        ssl_ctx = build_client_ssl_context(self.config)
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        }
+
+        connector = aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else None
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async with session.post(url, json=envelope, headers=headers) as response:
+                if response.status != 200:
                     raise Exception(f"Cross-server request failed: {response.status}")
+                data = await response.json()
+                return self._decrypt_task_from_transit(data)
     
     async def _get_cross_server_token(self, target_node: DistributedNode) -> str:
         """Get authentication token for cross-server communication"""
@@ -836,39 +845,39 @@ class DistributedA2AAgent(SMCPAgent):
         """Execute collaboration task on local agents"""
         return await self._execute_local_workflow_step(task_data, capability)
     
-    async def _encrypt_task_for_transit(self, task_data: Dict[str, Any], target_node: DistributedNode) -> Dict[str, Any]:
-        """Encrypt task data for secure transit using enhanced security"""
-        try:
-            # Use enhanced security system for encryption
-            auth_result = await self.security.authenticate({
-                "node_id": self.config.node_id,
-                "target_node": target_node.node_id,
-                "api_key": self.config.api_key
-            })
-            
-            if auth_result.success:
-                # In a real implementation, this would use the authenticated session
-                # to encrypt the message payload with AES-256-GCM
-                encrypted_task = {
-                    **task_data,
-                    "encrypted_transit": True,
-                    "auth_token": auth_result.token[:16] + "...",  # Show partial token
-                    "encryption_method": "aes256_gcm_transit",
-                    "message_integrity": "hmac_sha256_verified"
-                }
-                return encrypted_task
-            else:
-                raise Exception(f"Authentication failed for transit encryption: {auth_result.error}")
-                
-        except Exception as e:
-            # Fallback to basic encryption simulation
-            return {
-                **task_data,
-                "encrypted_transit": True,
-                "encryption_method": "aes256_gcm_transit_simulated",
-                "message_integrity": "hmac_sha256_simulated",
-                "auth_status": f"fallback_due_to: {str(e)}"
-            }
+    def _transit_cipher(self):
+        """Return the real authenticated cipher, or None if this mode has none.
+
+        Fernet (AES-128-CBC + HMAC-SHA256) provides confidentiality and
+        integrity. It is only present in modes that set up message encryption
+        (simple/encrypted); basic/enterprise rely on TLS at the transport layer.
+        """
+        return getattr(self.security, "cipher", None)
+
+    def _encrypt_task_for_transit(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Wrap the task payload in a real encrypted, authenticated envelope.
+
+        Fails closed: if no cipher is available, raises instead of returning
+        plaintext with cosmetic "encrypted" flags.
+        """
+        cipher = self._transit_cipher()
+        if cipher is None:
+            raise RuntimeError(
+                "No message cipher available for transit encryption in mode "
+                f"'{getattr(self.config, 'mode', 'unknown')}'. Refusing to send "
+                "plaintext. Use 'encrypted' mode or rely on TLS transport."
+            )
+        token = cipher.encrypt(json.dumps(task_data).encode()).decode()
+        return {"smcp_encrypted_envelope": token, "sender": self.config.node_id}
+
+    def _decrypt_task_from_transit(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Inverse of _encrypt_task_for_transit; pass through unencrypted responses."""
+        if not isinstance(data, dict) or "smcp_encrypted_envelope" not in data:
+            return data
+        cipher = self._transit_cipher()
+        if cipher is None:
+            raise RuntimeError("Received encrypted envelope but no cipher is configured to open it.")
+        return json.loads(cipher.decrypt(data["smcp_encrypted_envelope"].encode()).decode())
     
     async def _store_encrypted_poem(self, task_data: Dict[str, Any], target_node: DistributedNode, 
                                    stored_content: str, content_to_store: Dict[str, Any]) -> Dict[str, Any]:
@@ -1038,15 +1047,14 @@ Storage ID: {storage_id}
 {stored_content}
 
 ## Technical Details
-- Authentication: OAuth2 + JWT verified
-- Encryption: AES-256 + PBKDF2-SHA256 (encrypted version available)
-- Security Features: MCP encrypted storage, integrity verification, secure file permissions, audit trail logging
-- Distributed Workflow: Cross-server A2A communication with encrypted transit
-- Transit Encryption: AES-256-GCM with HMAC-SHA256 message integrity
+- Authentication: JWT verified
+- At-rest: handled by the MCP storage agent (see its own security_features)
+- Transit: in local simulation there is no network transit; real cross-server
+  calls use an authenticated Fernet envelope (AES-128-CBC + HMAC-SHA256) over TLS
 
 ---
-This is the readable version of the encrypted poem stored in the secure MCP system.
-The original encrypted version provides additional security and integrity guarantees.
+This is a plaintext readable copy for humans. Do not treat this file as encrypted;
+it is written in the clear alongside whatever the storage agent persisted.
 """
             
             # Write readable file

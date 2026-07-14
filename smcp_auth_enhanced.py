@@ -13,7 +13,7 @@ import time
 from typing import Dict, Any, Optional, Union, Tuple
 from dataclasses import dataclass
 from enum import Enum
-from cryptography.hazmat.primitives.asymmetric import rsa, ec
+from cryptography.hazmat.primitives.asymmetric import rsa, ec, padding
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption, PublicFormat
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -172,8 +172,10 @@ class EnhancedSMCPSecurity:
                 format=PublicFormat.SubjectPublicKeyInfo
             )
             
-            with open(f"{dev_key_dir}/jwt_private.pem", "wb") as f:
+            private_key_path = f"{dev_key_dir}/jwt_private.pem"
+            with open(private_key_path, "wb") as f:
                 f.write(private_pem)
+            os.chmod(private_key_path, 0o600)  # never leave a signing key world-readable
             with open(f"{dev_key_dir}/jwt_public.pem", "wb") as f:
                 f.write(public_pem)
             
@@ -275,9 +277,13 @@ class EnhancedSMCPSecurity:
                 expires_at=payload["exp"]
             )
         else:
-            # Validate existing token
+            # Validate existing token (bind to the audience/issuer the dev issuer sets)
             try:
-                payload = jwt.decode(token, self.jwt_public_key, algorithms=["RS256"])
+                payload = jwt.decode(
+                    token, self.jwt_public_key, algorithms=["RS256"],
+                    audience="scp_api", issuer="scp_dev_auth",
+                    options={"require": ["exp", "iat"]},
+                )
                 return AuthResult(
                     success=True,
                     token=token,
@@ -365,9 +371,17 @@ class EnhancedSMCPSecurity:
             if not jwk:
                 return {"success": False, "error": f"Key ID {kid} not found in JWKS"}
             
-            # Convert JWK to public key and validate
+            # Convert JWK to public key and validate. Bind audience/issuer when the
+            # deployment configured them; always require exp/iat.
             public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
-            payload = jwt.decode(token, public_key, algorithms=["RS256"])
+            decode_kwargs = {"algorithms": ["RS256"], "options": {"require": ["exp", "iat"]}}
+            expected_aud = getattr(self.oauth2_config, "client_id", None)
+            if expected_aud:
+                decode_kwargs["audience"] = expected_aud
+            expected_iss = getattr(self.oauth2_config, "token_url", None)
+            if expected_iss:
+                decode_kwargs["issuer"] = expected_iss
+            payload = jwt.decode(token, public_key, **decode_kwargs)
             
             return {
                 "success": True,

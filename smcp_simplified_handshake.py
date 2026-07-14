@@ -50,9 +50,17 @@ class SimplifiedHandshakeManager:
         
         # Generate RSA key pair for this node
         self._init_crypto()
-        
-        # Pre-configured one-time secrets (in production, these would be generated dynamically)
-        self._setup_demo_secrets()
+
+        # Pre-configured demo secrets are ONLY loaded in explicit development mode.
+        # They are publicly-known values in this repo, so loading them anywhere else
+        # would be a remote credential backdoor. Production uses
+        # generate_one_time_secret() to mint per-client secrets dynamically.
+        if getattr(self.config, "mode", "simple") == "development":
+            self._setup_demo_secrets()
+            self.logger.warning(
+                "DEVELOPMENT mode: publicly-known demo handshake secrets are active. "
+                "Never run this mode in production."
+            )
     
     def _init_crypto(self):
         """Initialize RSA key pair for asymmetric encryption"""
@@ -122,14 +130,18 @@ class SimplifiedHandshakeManager:
         if secret_info["client_id"] != client_id and secret_info["client_id"] != "*":
             self.logger.warning(f"Client ID mismatch for secret: expected {secret_info['client_id']}, got {client_id}")
             return False
-        
-        self.logger.info(f"Valid one-time secret from {client_id}")
+
+        # Consume the secret: it is single-use, so a captured/replayed secret is
+        # rejected on the second attempt.
+        del self.one_time_secrets[secret]
+        self.logger.info(f"Valid one-time secret from {client_id} (consumed)")
         return True
     
     def validate_forwarded_jwt(self, jwt_token: str) -> Dict[str, Any]:
         """Validate forwarded JWT token (for node-to-node handshakes)"""
         try:
-            payload = jwt.decode(jwt_token, self.config.jwt_secret, algorithms=['HS256'])
+            payload = jwt.decode(jwt_token, self.config.jwt_secret, algorithms=['HS256'],
+                                 options={"require": ["exp", "iat"]})
             
             # Check expiration
             if payload.get('exp', 0) < time.time():
@@ -434,10 +446,11 @@ class SimplifiedHandshakeManager:
         if session.expires_at < time.time():
             raise ValueError(f"Session expired: {session_id}")
         
-        # Increment nonce counter
-        session.nonce_counter += 1
-        nonce = session.nonce_counter.to_bytes(12, byteorder='big')
-        
+        # Random 96-bit nonce per message. A shared per-writer counter (both
+        # endpoints hold the same session key and each started at 0) caused
+        # AES-GCM nonce reuse; a random nonce eliminates it.
+        nonce = secrets.token_bytes(12)
+
         # Serialize and encrypt data
         plaintext = json.dumps(data).encode()
         

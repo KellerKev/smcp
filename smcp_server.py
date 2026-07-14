@@ -21,13 +21,27 @@ class SMCPServer:
     
     def __init__(self, config: SMCPConfig = None):
         self.config = config or SMCPConfig(node_id="scp_server")
+        # Fail closed: never start a server with empty/weak/known secrets, even
+        # when constructed directly (the CLI enforces this too, but the library
+        # path must not be a way around it).
+        issues = self.config.validate()
+        if issues:
+            raise ValueError(
+                "Refusing to start SMCPServer with an insecure configuration:\n  - "
+                + "\n  - ".join(issues)
+            )
         self.node = SMCPNode(
             self.config.node_id,
             self.config.secret_key,
             self.config.jwt_secret,
-            getattr(self.config, "kdf_salt", "")
+            getattr(self.config, "kdf_salt", ""),
+            api_key=self.config.api_key,
+            jwt_algorithm=self.config.security.jwt_algorithm,
+            jwt_private_key_path=self.config.security.jwt_private_key_path,
+            jwt_public_key_path=self.config.security.jwt_public_key_path,
         )
         self.connections = {}
+        self._rate_windows = {}  # client_addr -> list[request timestamps]
         self.running = False
         
         # Setup logging
@@ -132,26 +146,60 @@ class SMCPServer:
         self.node.register_capability(capability, handler)
         self.logger.info(f"✓ Registered tool: {name}")
     
+    def _allow_request(self, client_addr: str) -> bool:
+        """Sliding-window rate limiter: at most security.rate_limit requests per
+        minute per client address. Returns False when the limit is exceeded."""
+        import time
+        limit = self.config.security.rate_limit
+        if not limit or limit <= 0:
+            return True
+        now = time.time()
+        window = self._rate_windows.setdefault(client_addr, [])
+        cutoff = now - 60.0
+        # Drop timestamps older than the 60s window.
+        window[:] = [t for t in window if t >= cutoff]
+        if len(window) >= limit:
+            return False
+        window.append(now)
+        return True
+
     async def handle_client(self, websocket):
         """Handle client connection"""
         client_addr = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+
+        # Enforce the concurrent-connection cap (fail closed, don't grow unbounded).
+        max_conns = self.config.security.max_connections
+        if max_conns and len(self.connections) >= max_conns:
+            self.logger.warning(f"Connection refused (max_connections={max_conns}): {client_addr}")
+            await websocket.close(code=1013, reason="server at capacity")
+            return
+
         self.connections[client_addr] = websocket
         self.logger.info(f"✓ Client connected: {client_addr}")
-        
+
         try:
             async for raw_message in websocket:
                 try:
+                    # Per-client rate limiting.
+                    if not self._allow_request(client_addr):
+                        await websocket.send(json.dumps({
+                            "type": "error",
+                            "payload": {"error": "Rate limit exceeded"},
+                            "timestamp": datetime.now().timestamp()
+                        }))
+                        continue
+
                     # Parse message
                     message_data = json.loads(raw_message)
                     message = SMCPMessage.from_dict(message_data)
-                    
+
                     # Process message
                     response = self.node.process_message(message)
-                    
+
                     # Send response
                     if response:
                         await websocket.send(json.dumps(response.to_dict()))
-                        
+
                 except json.JSONDecodeError:
                     self.logger.error("Invalid JSON received")
                 except Exception as e:
@@ -162,7 +210,7 @@ class SMCPServer:
                         "timestamp": datetime.now().timestamp()
                     }
                     await websocket.send(json.dumps(error_response))
-        
+
         except websockets.exceptions.ConnectionClosed:
             pass
         except Exception as e:
@@ -170,23 +218,46 @@ class SMCPServer:
         finally:
             if client_addr in self.connections:
                 del self.connections[client_addr]
+            self._rate_windows.pop(client_addr, None)
             self.logger.info(f"✗ Client disconnected: {client_addr}")
     
     async def start(self, host: str = "localhost", port: int = 8765):
         """Start the server"""
+        import ssl as _ssl
+        from smcp_config import build_server_ssl_context, _host_is_loopback
+
         self.running = True
-        self.logger.info(f"🚀 SCP Server starting on {host}:{port}")
+
+        # Transport security: build the TLS context if enabled, otherwise refuse
+        # to bind a plaintext listener on a non-loopback interface unless the
+        # operator has explicitly opted into insecure transit.
+        ssl_ctx = build_server_ssl_context(self.config)
+        if ssl_ctx is None and not _host_is_loopback(host):
+            if not self.config.security.allow_insecure_transit:
+                raise ValueError(
+                    f"Refusing to bind a plaintext (ws://) listener on {host}:{port}. "
+                    f"Enable security.tls_enabled (with cert/key), or bind to localhost, "
+                    f"or set security.allow_insecure_transit for development."
+                )
+            self.logger.warning(
+                f"Serving PLAINTEXT ws:// on {host}:{port} (allow_insecure_transit is set)"
+            )
+
+        scheme = "wss" if ssl_ctx else "ws"
+        self.logger.info(f"🚀 SCP Server starting on {scheme}://{host}:{port}")
         self.logger.info(f"📋 Registered {len(self.node.capabilities)} capabilities:")
-        
+
         for name, cap in self.node.capabilities.items():
             self.logger.info(f"   - {name}: {cap.description}")
-        
+
         start_server = websockets.serve(
             self.handle_client,
             host,
             port,
             ping_interval=20,
-            ping_timeout=10
+            ping_timeout=10,
+            ssl=ssl_ctx,
+            max_size=self.config.security.max_message_size,
         )
         
         self.logger.info(f"✓ Server ready - waiting for connections...")

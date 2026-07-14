@@ -72,7 +72,8 @@ class JWTSessionManager:
         try:
             # In production, would verify against OAuth2 server's public key
             # For now, use shared secret for dev/test
-            payload = jwt.decode(jwt_token, self.jwt_secret, algorithms=['HS256'])
+            payload = jwt.decode(jwt_token, self.jwt_secret, algorithms=['HS256'],
+                                 options={"require": ["exp", "iat"]})
             
             # Check expiration
             if payload.get('exp', 0) < time.time():
@@ -318,10 +319,11 @@ class JWTSessionManager:
         if session.expires_at < time.time():
             raise ValueError(f"Session expired: {session_id}")
         
-        # Increment nonce counter
-        session.nonce_counter += 1
-        nonce = session.nonce_counter.to_bytes(12, byteorder='big')
-        
+        # Random 96-bit nonce per message. A shared per-writer counter (both
+        # endpoints hold the same session key and each started at 0) caused
+        # AES-GCM nonce reuse; a random nonce eliminates it.
+        nonce = secrets.token_bytes(12)
+
         # Serialize and encrypt
         plaintext = json.dumps(data).encode()
         

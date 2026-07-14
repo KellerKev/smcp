@@ -32,10 +32,15 @@ Usage Example:
 import asyncio
 import duckdb
 import json
+import re
 import time
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union
 from pathlib import Path
+
+# A SQL identifier we are willing to interpolate into a statement. DuckDB cannot
+# bind identifiers as parameters, so we allow only a conservative charset.
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 import sys
 from pathlib import Path
@@ -62,12 +67,38 @@ class DuckDBConnector(SMCPConnectorBase):
         self.database_path = config.connection_params.get("database_path", ":memory:")
         self.connection = None
         
-        # DuckDB-specific configuration
-        self.enable_external_access = config.connection_params.get("enable_external_access", True)
+        # DuckDB-specific configuration.
+        # SECURITY: external access lets SQL read/write the host filesystem and
+        # fetch remote URLs (read_csv_auto, COPY ... TO, httpfs). It defaults to
+        # OFF and must be explicitly opted into per deployment.
+        self.enable_external_access = config.connection_params.get("enable_external_access", False)
         self.threads = config.connection_params.get("threads", 4)
         self.memory_limit = config.connection_params.get("memory_limit", "1GB")
-        
+        # File operations are confined to this directory (resolved, symlink-safe).
+        # Defaults to the current working directory; set "data_dir" to restrict it.
+        self.data_dir = Path(config.connection_params.get("data_dir", ".")).resolve()
+
         self.logger.info(f"Initializing DuckDB connector: {self.database_path}")
+
+    @staticmethod
+    def _validate_identifier(name: str) -> str:
+        """Return a safe SQL identifier or raise ValueError."""
+        if not isinstance(name, str) or not _IDENTIFIER_RE.match(name):
+            raise ValueError(f"Invalid table/identifier name: {name!r}")
+        return name
+
+    def _validate_file_path(self, file_path: str) -> str:
+        """Confine a file path to data_dir (symlink-safe) and require external
+        access to be enabled. Returns the resolved absolute path or raises."""
+        if not self.enable_external_access:
+            raise ValueError(
+                "File access is disabled (enable_external_access=False). Refusing "
+                "to read/write host files."
+            )
+        resolved = Path(file_path).resolve()
+        if resolved != self.data_dir and self.data_dir not in resolved.parents:
+            raise ValueError(f"Path {file_path!r} is outside the allowed data directory")
+        return str(resolved)
     
     async def connect(self) -> bool:
         """
@@ -240,12 +271,12 @@ class DuckDBConnector(SMCPConnectorBase):
             # Get detailed info for each table
             for table_name, table_type in tables_result:
                 # Get column information
-                columns_result = self.connection.execute(f"""
+                columns_result = self.connection.execute("""
                     SELECT column_name, data_type, is_nullable
-                    FROM information_schema.columns 
-                    WHERE table_name = '{table_name}' AND table_schema = 'main'
+                    FROM information_schema.columns
+                    WHERE table_name = ? AND table_schema = 'main'
                     ORDER BY ordinal_position
-                """).fetchall()
+                """, [table_name]).fetchall()
                 
                 table_info = {
                     "name": table_name,
@@ -261,11 +292,12 @@ class DuckDBConnector(SMCPConnectorBase):
                     "column_count": len(columns_result)
                 }
                 
-                # Get row count for tables
+                # Get row count for tables (only for well-formed identifiers)
                 try:
-                    row_count_result = self.connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
+                    safe_name = self._validate_identifier(table_name)
+                    row_count_result = self.connection.execute(f"SELECT COUNT(*) FROM {safe_name}").fetchone()
                     table_info["row_count"] = row_count_result[0] if row_count_result else 0
-                except:
+                except Exception:
                     table_info["row_count"] = None
                 
                 schema["tables"].append(table_info)
@@ -313,24 +345,26 @@ class DuckDBConnector(SMCPConnectorBase):
         
         try:
             start_time = time.time()
-            
+
+            # Validate the identifier and confine/parameterize the file path.
+            table_name = self._validate_identifier(table_name)
+            safe_path = self._validate_file_path(file_path)
+
             # Auto-detect file format if needed
             if file_format == "auto":
                 file_ext = Path(file_path).suffix.lower()
                 format_map = {".csv": "csv", ".parquet": "parquet", ".json": "json"}
                 file_format = format_map.get(file_ext, "csv")
-            
-            # Build appropriate query based on file format
-            if file_format == "csv":
-                query = f"INSERT INTO {table_name} SELECT * FROM read_csv_auto('{file_path}')"
-            elif file_format == "parquet":
-                query = f"INSERT INTO {table_name} SELECT * FROM read_parquet('{file_path}')"
-            elif file_format == "json":
-                query = f"INSERT INTO {table_name} SELECT * FROM read_json_auto('{file_path}')"
-            else:
+
+            # File path is bound as a parameter (no string interpolation).
+            reader = {
+                "csv": "read_csv_auto", "parquet": "read_parquet", "json": "read_json_auto",
+            }.get(file_format)
+            if reader is None:
                 return self.create_error_result(query_id, f"Unsupported file format: {file_format}")
-            
-            result = self.connection.execute(query)
+            query = f"INSERT INTO {table_name} SELECT * FROM {reader}(?)"
+
+            result = self.connection.execute(query, [safe_path])
             execution_time = time.time() - start_time
             row_count = result.rowcount if hasattr(result, 'rowcount') else 0
             
@@ -374,27 +408,29 @@ class DuckDBConnector(SMCPConnectorBase):
         
         try:
             start_time = time.time()
-            
+
+            # Validate the identifier and confine/parameterize the file path.
+            table_name = self._validate_identifier(table_name)
+            safe_path = self._validate_file_path(file_path)
+
             # Auto-detect file format if needed
             if file_format == "auto":
                 file_ext = Path(file_path).suffix.lower()
                 format_map = {".csv": "csv", ".parquet": "parquet", ".json": "json"}
                 file_format = format_map.get(file_ext, "csv")
-            
-            # Build appropriate query based on file format
-            if file_format == "csv":
-                query = f"CREATE TABLE {table_name} AS SELECT * FROM read_csv_auto('{file_path}')"
-            elif file_format == "parquet":
-                query = f"CREATE TABLE {table_name} AS SELECT * FROM read_parquet('{file_path}')"
-            elif file_format == "json":
-                query = f"CREATE TABLE {table_name} AS SELECT * FROM read_json_auto('{file_path}')"
-            else:
+
+            # File path is bound as a parameter (no string interpolation).
+            reader = {
+                "csv": "read_csv_auto", "parquet": "read_parquet", "json": "read_json_auto",
+            }.get(file_format)
+            if reader is None:
                 return self.create_error_result(query_id, f"Unsupported file format: {file_format}")
-            
-            result = self.connection.execute(query)
+            query = f"CREATE TABLE {table_name} AS SELECT * FROM {reader}(?)"
+
+            result = self.connection.execute(query, [safe_path])
             execution_time = time.time() - start_time
-            
-            # Get row count of new table
+
+            # Get row count of new table (identifier already validated)
             row_count_result = self.connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
             row_count = row_count_result[0] if row_count_result else 0
             

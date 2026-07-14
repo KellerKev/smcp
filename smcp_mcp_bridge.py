@@ -68,6 +68,9 @@ class MCPServerConfig:
     # Protocol settings
     protocol: str = "ws"  # ws, http, grpc
     version: str = "1.0"
+    # Transport security: refuse to send credentials over plaintext unless this
+    # is explicitly set AND the target is loopback.
+    allow_insecure: bool = False
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary"""
@@ -273,9 +276,19 @@ class MCPConnectionPool:
             self.initialized = True
             logger.info(f"Initialized connection pool for {self.config.name} with {len(self.connections)} connections")
     
+    def _verify_transport_security(self):
+        """Refuse to open a connection that would leak credentials over plaintext.
+
+        Bearer tokens / API keys are attached as headers, so a ws://http:// URL to
+        anything but loopback (with an explicit opt-in) is rejected.
+        """
+        from smcp_config import enforce_secure_url
+        enforce_secure_url(self.config.url, allow_insecure=self.config.allow_insecure)
+
     async def _create_connection(self):
         """Create a new connection based on protocol"""
         try:
+            self._verify_transport_security()
             if self.config.protocol == "ws":
                 # WebSocket connection
                 return await websockets.connect(
@@ -621,6 +634,17 @@ MCP_SERVER_PRESETS = {
 }
 
 
+def _is_plaintext_loopback(url: str) -> bool:
+    """True only for ws://http:// URLs pointing at loopback — a safe dev default.
+
+    Remote plaintext URLs return False so enforce_secure_url() will reject them.
+    """
+    from urllib.parse import urlparse
+    p = urlparse(url)
+    return (p.scheme or "").lower() in ("ws", "http") and \
+        p.hostname in ("localhost", "127.0.0.1", "::1")
+
+
 def create_mindsdb_config(
     url: str = "http://localhost:47337/sse",
     api_key: str = "demo_key",
@@ -631,7 +655,7 @@ def create_mindsdb_config(
     """Helper to create MindDB configuration"""
     
     preset = MCP_SERVER_PRESETS["mindsdb"]
-    
+
     return MCPServerConfig(
         server_id=f"mindsdb_{uuid.uuid4().hex[:8]}",
         server_type=preset["server_type"],
@@ -643,6 +667,7 @@ def create_mindsdb_config(
         metadata=preset["metadata"],
         timeout=preset["timeout"],
         protocol=preset["protocol"],
+        allow_insecure=_is_plaintext_loopback(url),
         mindsdb_project=project,
         mindsdb_model=model
     )
@@ -667,7 +692,8 @@ def create_langchain_config(
         auth_token=auth_token,
         metadata=preset["metadata"],
         timeout=preset["timeout"],
-        protocol=preset["protocol"]
+        protocol=preset["protocol"],
+        allow_insecure=_is_plaintext_loopback(url)
     )
 
 

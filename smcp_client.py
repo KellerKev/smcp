@@ -20,8 +20,21 @@ class SMCPClient:
     
     def __init__(self, config: SMCPConfig = None):
         self.config = config or SMCPConfig()
-        self.node = SMCPNode(self.config.node_id, self.config.secret_key, self.config.jwt_secret,
-                             getattr(self.config, "kdf_salt", ""))
+        # Fail closed: a client with empty/weak/known secrets cannot establish a
+        # trustworthy channel, so refuse rather than connect insecurely.
+        issues = self.config.validate()
+        if issues:
+            raise ValueError(
+                "Refusing to create SMCPClient with an insecure configuration:\n  - "
+                + "\n  - ".join(issues)
+            )
+        self.node = SMCPNode(
+            self.config.node_id, self.config.secret_key, self.config.jwt_secret,
+            getattr(self.config, "kdf_salt", ""), api_key=self.config.api_key,
+            jwt_algorithm=self.config.security.jwt_algorithm,
+            jwt_private_key_path=self.config.security.jwt_private_key_path,
+            jwt_public_key_path=self.config.security.jwt_public_key_path,
+        )
         self.websocket = None
         self.auth_token = None
         self.capabilities = {}
@@ -29,11 +42,20 @@ class SMCPClient:
     
     async def connect(self):
         """Connect to SCP server"""
+        from smcp_config import enforce_secure_url, build_client_ssl_context
         try:
+            # Refuse plaintext transport unless explicitly allowed to loopback.
+            enforce_secure_url(
+                self.config.server_url,
+                allow_insecure=self.config.security.allow_insecure_transit,
+            )
+            ssl_ctx = build_client_ssl_context(self.config)
             self.websocket = await websockets.connect(
                 self.config.server_url,
                 ping_interval=20,
-                ping_timeout=10
+                ping_timeout=10,
+                ssl=ssl_ctx,
+                max_size=self.config.security.max_message_size,
             )
             
             await self._handshake()
