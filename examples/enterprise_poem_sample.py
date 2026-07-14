@@ -227,7 +227,7 @@ class EnterprisePoetryAgent(DistributedA2AAgent):
         except Exception as e:
             print(f"   ❌ Ollama poem generation failed: {e}")
             print("   💡 Make sure Ollama is running: ollama serve")  
-            print("   💡 Install required model: ollama pull qwen25_coder:7b-instruct-q4_K_M")
+            print("   💡 Install required model: ollama pull qwen2.5-coder:7b-instruct-q4_K_M")
             return {
                 "status": "failed",
                 "error": f"Ollama poem generation failed - demo requires working Ollama server: {e}",
@@ -530,7 +530,9 @@ async def demo_enterprise_features():
                 mode="enterprise",
                 oauth2=OAuth2Config(
                     enabled=True,
-                    local_public_key_path="./dev_keys/jwt_public.pem"  # Use dev keys for demo
+                    local_public_key_path="./dev_keys/jwt_public.pem",  # static-key (no JWKS) demo
+                    audience="scp_api",
+                    issuer="scp_dev_auth",
                 ),
                 crypto=CryptoConfig(
                     key_exchange="ecdh",

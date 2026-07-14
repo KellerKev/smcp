@@ -58,9 +58,16 @@ federated_storage/
 logs/
 *.out
 
-# Test files
+# Ad-hoc test scripts (but keep the real pytest suite under tests/ and the
+# interop vector at the repo root)
 test_*.py
 *_test.py
+!tests/
+!tests/**
+!test_v3_interop.py
+# ...but never the compiled artifacts under tests/
+tests/**/__pycache__/
+tests/**/*.pyc
 
 # Temporary files
 *.tmp

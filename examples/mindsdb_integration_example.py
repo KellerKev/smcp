@@ -433,12 +433,12 @@ async def demo_mindsdb_integration():
         else:
             print("   ❌ Ollama not available - hybrid analysis requires Ollama")
             print("   💡 Start Ollama: ollama serve")
-            print("   💡 Install models: ollama pull qwen3_coder:30b-a3b-q4_K_M")
+            print("   💡 Install models: ollama pull qwen3-coder:30b-a3b-q4_K_M")
             raise Exception("Hybrid analysis requires working Ollama server with Qwen3 Coder model")
     except Exception as e:
         print(f"   ❌ Ollama connection failed: {e}")
         print("   💡 Start Ollama: ollama serve")
-        print("   💡 Install models: ollama pull qwen3_coder:30b-a3b-q4_K_M")
+        print("   💡 Install models: ollama pull qwen3-coder:30b-a3b-q4_K_M")
         raise Exception(f"Hybrid analysis requires working Ollama server: {e}")
     
     # Query PostgreSQL data for analysis
@@ -494,7 +494,7 @@ async def demo_mindsdb_integration():
     else:
         print("   ❌ Hybrid analysis failed")
         print("   💡 Make sure both MindDB and Ollama are running correctly")
-        print("   💡 Check Qwen3 Coder model availability: ollama pull qwen3_coder:30b-a3b-q4_K_M")
+        print("   💡 Check Qwen3 Coder model availability: ollama pull qwen3-coder:30b-a3b-q4_K_M")
     
     # Demo 6: Real-time Analytics Dashboard Data
     print("\n6️⃣ Demo: Real-time Analytics Pipeline")

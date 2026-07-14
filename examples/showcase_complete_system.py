@@ -263,7 +263,7 @@ class SMCPShowcaseDemo:
             if "ai_chat" not in capabilities:
                 print("   ❌ Ollama not available - AI demo cannot continue")
                 print("   💡 Make sure Ollama is running: ollama serve")
-                print("   💡 Install required models: ollama pull qwen25_coder:7b-instruct-q4_K_M")
+                print("   💡 Install required models: ollama pull qwen2.5-coder:7b-instruct-q4_K_M")
                 raise Exception("AI showcase requires working Ollama server for AI integration demo")
             
             print("🎯 SCP AI Integration:")

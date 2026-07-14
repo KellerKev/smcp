@@ -63,7 +63,8 @@ Choose per deployment — the same tools, a stronger posture as you need it:
 - **Simple** — API key authentication → JWT sessions (local/dev)
 - **Basic** — JWT sessions; rely on TLS (`wss://`) for transport security
 - **Encrypted** — ECDH key exchange + authenticated per-message payload encryption
-- **Enterprise** — OAuth2 + audit trail (experimental)
+- **Enterprise** — OAuth2 client-credentials against an external identity provider (JWKS or a
+  pinned static public key), with full token verification
 
 Regardless of mode, the security layer is **fail-closed**: `SMCPConfig.validate()` rejects empty,
 too-short, placeholder, or publicly-known secrets, and both `SMCPServer` and `SMCPClient` refuse to
@@ -74,6 +75,17 @@ start if validation fails.
 By default JWTs are signed with a shared secret (HS256) — fine within a single trust domain. For
 multi-party deployments, set `jwt_algorithm="RS256"` with a server-held private key and a client
 public key: the server mints tokens, clients verify them, and a client **cannot forge its own**.
+
+### 🏢 External-IdP OAuth2 (enterprise mode)
+
+Enterprise mode validates OAuth2 access tokens from an external identity provider. It **fails
+closed**: `oauth2.audience`, `oauth2.issuer`, and a key source (`oauth2.jwks_url` **or**
+`oauth2.local_public_key_path`) are required, tokens are verified with the algorithm pinned to
+RS256 and `exp`/`iat`/`aud`/`iss` required, IdP calls are forced to HTTPS with certificate
+verification (a CA bundle can be pinned via `oauth2.ca_cert_path`), and JWKS key rotation is handled
+automatically. Covered by an end-to-end test suite that runs against a mock OIDC provider (token
+endpoint + JWKS), including wrong-audience, wrong-issuer, expired, `alg=none`, HS/RS-confusion, and
+key-rotation cases.
 
 ### 🤖 Agent-to-Agent (A2A) System
 
@@ -159,8 +171,9 @@ pixi run test-interop
 The suite covers config validation, the removal of the old demo backdoor, replay/staleness
 rejection, per-tool authorization, JWT issuer/audience/expiry, the RS256 verify-only client, TLS
 enforcement, DuckDB injection/path-confinement, and filesystem traversal/size caps. The
-end-to-end test stands up a real server and client on loopback (the Ollama-backed test skips
-automatically if Ollama or the demo model isn't available).
+external-IdP OAuth2 flow is exercised end-to-end against a mock OIDC provider. The
+server/client end-to-end test stands up a real server and client on loopback (the Ollama-backed
+test skips automatically if Ollama or the demo model isn't available).
 
 ## 🎯 Quick Demo
 
@@ -328,7 +341,8 @@ This project is licensed under the MIT License.
 - ✅ **DuckDB / Filesystem connectors**: hardened example implementations
 - ✅ **CrewAI Integration**: working demo (in the `integrations` env)
 - ✅ **MindsDB integration**: working demo (requires a MindsDB container)
-- 🚧 **Enterprise / OAuth2 mode**: experimental
+- ✅ **Enterprise / OAuth2 mode**: external-IdP token validation, hardened and test-covered
+  (JWKS + static-key), verified against a mock OIDC provider
 
 ---
 

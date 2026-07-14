@@ -199,11 +199,11 @@ class PoemGenerationAgent(SMCPAgent):
                     "status": "success",
                     "enhancement_data": enhancement_data,
                     "improvement_score": 0.85,  # Simulated quality metric
-                    "model_used": "qwen3_coder:latest"
+                    "model_used": "qwen3-coder:latest"
                 }
             else:
                 print(f"   ❌ Qwen3 Coder enhancement failed: HTTP {response.status_code}")
-                print("   💡 Make sure Qwen3 Coder model is installed: ollama pull qwen3_coder:latest")
+                print("   💡 Make sure Qwen3 Coder model is installed: ollama pull qwen3-coder:latest")
                 return {
                     "status": "error", 
                     "error": f"Qwen3 Coder service error: {response.status_code}",
@@ -213,7 +213,7 @@ class PoemGenerationAgent(SMCPAgent):
         except Exception as e:
             print(f"   ❌ Qwen3 Coder enhancement error: {e}")
             print("   💡 Make sure Ollama is running: ollama serve")
-            print("   💡 Make sure Qwen3 Coder model is installed: ollama pull qwen3_coder:latest")
+            print("   💡 Make sure Qwen3 Coder model is installed: ollama pull qwen3-coder:latest")
             return {
                 "status": "error",
                 "error": f"Failed to enhance with Qwen3 Coder: {str(e)}",
@@ -328,7 +328,7 @@ class PoemGenerationAgent(SMCPAgent):
                     "collaboration_type": collaboration_type,
                     "final_poem": final_poem,
                     "storage_result": storage_result,
-                    "agents_used": ["qwen25_coder:7b-instruct-q4_K_M", "qwen3_coder:30b-a3b-q4_K_M"],
+                    "agents_used": ["qwen2.5-coder:7b-instruct-q4_K_M", "qwen3-coder:30b-a3b-q4_K_M"],
                     "security_flow": "encrypted_a2a_to_mcp_local"
                 }
             

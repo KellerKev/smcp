@@ -422,7 +422,7 @@ async def demo_secure_mcp_storage():
     test_collaboration = {
         "collaboration_id": str(uuid.uuid4()),
         "collaboration_type": "sequential",
-        "agents_involved": ["qwen25_coder:7b-instruct-q4_K_M", "qwen3_coder:latest"],
+        "agents_involved": ["qwen2.5-coder:7b-instruct-q4_K_M", "qwen3-coder:latest"],
         "security_flow": "encrypted_a2a_to_mcp_local"
     }
     

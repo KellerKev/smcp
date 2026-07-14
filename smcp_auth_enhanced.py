@@ -189,10 +189,49 @@ class EnhancedSMCPSecurity:
                 self.jwt_public_key = serialization.load_pem_public_key(f.read())
     
     def _setup_production_oauth2(self):
-        """Setup production OAuth2 with JWKS"""
-        self.oauth2_session = aiohttp.ClientSession()
+        """Setup production OAuth2 with JWKS — fail closed and TLS-verified.
+
+        Requires jwks_url + audience + issuer so tokens are actually bound to this
+        service; enforces https to the IdP (http only to loopback when
+        allow_insecure is set); verifies the IdP certificate, optionally against a
+        pinned CA bundle.
+        """
+        import ssl as _ssl
+        from smcp_config import enforce_secure_url
+
+        cfg = self.config.oauth2
+        # Verification key source: either a JWKS endpoint (rotating keys) or a
+        # pinned static public key. One of them is required — without a key there
+        # is nothing to verify a token against.
+        if not cfg.jwks_url and not cfg.local_public_key_path:
+            raise ValueError(
+                "production OAuth2 requires oauth2.jwks_url or oauth2.local_public_key_path"
+            )
+        if not cfg.audience or not cfg.issuer:
+            raise ValueError(
+                "oauth2.audience and oauth2.issuer are required for production "
+                "OAuth2 (they bind tokens to this service)"
+            )
+
+        self._oauth_static_key = None
+        self.oauth2_session = None
         self.jwks_cache = {}
         self.jwks_cache_time = 0
+
+        if cfg.local_public_key_path:
+            # Static-key mode: no IdP endpoint, verify against a distributed key.
+            with open(cfg.local_public_key_path, "rb") as f:
+                self._oauth_static_key = serialization.load_pem_public_key(f.read())
+
+        if cfg.jwks_url or cfg.token_url:
+            for url in (cfg.jwks_url, cfg.token_url):
+                if url:
+                    enforce_secure_url(url, allow_insecure=cfg.allow_insecure)
+            ssl_ctx = None
+            if cfg.ca_cert_path:
+                ssl_ctx = _ssl.create_default_context(cafile=cfg.ca_cert_path)
+            connector = aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else None
+            self.oauth2_session = aiohttp.ClientSession(connector=connector)
     
     def _save_private_key(self, path: str):
         """Save private key to file"""
@@ -321,6 +360,9 @@ class EnhancedSMCPSecurity:
     
     async def _get_oauth2_token(self) -> Dict[str, Any]:
         """Get OAuth2 access token using client credentials"""
+        if not self.oauth2_config.token_url:
+            return {"success": False,
+                    "error": "oauth2.token_url is not configured; supply an access_token instead"}
         try:
             data = {
                 "grant_type": "client_credentials",
@@ -350,58 +392,68 @@ class EnhancedSMCPSecurity:
             return {"success": False, "error": f"Token request exception: {str(e)}"}
     
     async def _validate_jwt_token(self, token: str) -> Dict[str, Any]:
-        """Validate JWT token using JWKS"""
+        """Validate a JWT against the IdP JWKS with full claim binding.
+
+        Pins RS256, requires exp/iat/aud/iss, and binds aud/iss to the configured
+        expected values (no heuristics). Handles key rotation: if the token's kid
+        isn't in the cached JWKS, the JWKS is refetched once before failing.
+        """
         try:
-            # Get JWKS
-            jwks = await self._get_jwks()
-            if not jwks["success"]:
-                return {"success": False, "error": jwks["error"]}
-            
-            # Decode token header to get kid
-            header = jwt.get_unverified_header(token)
-            kid = header.get("kid")
-            
-            # Find matching key in JWKS
-            jwk = None
-            for key in jwks["keys"]:
-                if key.get("kid") == kid:
-                    jwk = key
-                    break
-            
-            if not jwk:
-                return {"success": False, "error": f"Key ID {kid} not found in JWKS"}
-            
-            # Convert JWK to public key and validate. Bind audience/issuer when the
-            # deployment configured them; always require exp/iat.
-            public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
-            decode_kwargs = {"algorithms": ["RS256"], "options": {"require": ["exp", "iat"]}}
-            expected_aud = getattr(self.oauth2_config, "client_id", None)
-            if expected_aud:
-                decode_kwargs["audience"] = expected_aud
-            expected_iss = getattr(self.oauth2_config, "token_url", None)
-            if expected_iss:
-                decode_kwargs["issuer"] = expected_iss
-            payload = jwt.decode(token, public_key, **decode_kwargs)
-            
+            # Static-key mode verifies against a pinned public key; JWKS mode
+            # selects the key by the token's kid (with one rotation refresh).
+            if getattr(self, "_oauth_static_key", None) is not None:
+                public_key = self._oauth_static_key
+            else:
+                try:
+                    kid = jwt.get_unverified_header(token).get("kid")
+                except jwt.InvalidTokenError as e:
+                    return {"success": False, "error": f"Malformed token header: {e}"}
+
+                jwk = await self._find_jwk(kid)
+                if jwk is None:
+                    # Possible key rotation — force a fresh JWKS fetch and retry once.
+                    jwk = await self._find_jwk(kid, force_refresh=True)
+                if jwk is None:
+                    return {"success": False, "error": f"Key ID {kid} not found in JWKS"}
+                public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
+
+            payload = jwt.decode(
+                token, public_key,
+                algorithms=["RS256"],
+                audience=self.oauth2_config.audience,
+                issuer=self.oauth2_config.issuer,
+                options={"require": ["exp", "iat", "aud", "iss"]},
+            )
             return {
                 "success": True,
                 "payload": payload,
-                "expires_at": payload.get("exp")
+                "expires_at": payload.get("exp"),
             }
-            
+
         except jwt.InvalidTokenError as e:
             return {"success": False, "error": f"Token validation failed: {str(e)}"}
         except Exception as e:
             return {"success": False, "error": f"Validation exception: {str(e)}"}
+
+    async def _find_jwk(self, kid: Optional[str], force_refresh: bool = False) -> Optional[Dict[str, Any]]:
+        """Return the JWK matching kid from the (optionally refreshed) JWKS."""
+        jwks = await self._get_jwks(force_refresh=force_refresh)
+        if not jwks["success"]:
+            return None
+        for key in jwks["keys"]:
+            if key.get("kid") == kid:
+                return key
+        return None
     
-    async def _get_jwks(self) -> Dict[str, Any]:
-        """Get JWKS with caching"""
+    async def _get_jwks(self, force_refresh: bool = False) -> Dict[str, Any]:
+        """Get JWKS with caching (5 min TTL). force_refresh bypasses the cache to
+        pick up rotated signing keys."""
         current_time = time.time()
-        
-        # Check cache (5 minute TTL)
-        if self.jwks_cache and (current_time - self.jwks_cache_time) < 300:
+
+        # Check cache (5 minute TTL) unless a refresh is forced.
+        if not force_refresh and self.jwks_cache and (current_time - self.jwks_cache_time) < 300:
             return {"success": True, "keys": self.jwks_cache}
-        
+
         try:
             async with self.oauth2_session.get(self.oauth2_config.jwks_url) as response:
                 if response.status == 200:
@@ -510,7 +562,7 @@ class EnhancedSMCPSecurity:
     
     async def close(self):
         """Clean up resources"""
-        if hasattr(self, 'oauth2_session'):
+        if getattr(self, 'oauth2_session', None) is not None:
             await self.oauth2_session.close()
         
         # Clear all session keys

@@ -52,6 +52,15 @@ class OAuth2Config:
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
     scope: str = "scp:read scp:write"
+    # Token claims that incoming access tokens MUST match. Both are required when
+    # OAuth2 is enabled — they are the audience/issuer binding that stops a token
+    # minted for a different service (by the same IdP) from being accepted here.
+    audience: Optional[str] = None
+    issuer: Optional[str] = None
+    # TLS to the identity provider (token/JWKS endpoints). ca_cert_path pins a CA
+    # bundle; allow_insecure permits http:// only to a loopback IdP for testing.
+    ca_cert_path: Optional[str] = None
+    allow_insecure: bool = False
     # Simplified mode: use local public key instead of JWKS URL
     local_public_key_path: Optional[str] = None
 
@@ -533,7 +542,25 @@ class SMCPConfig:
         
         if self.security.max_message_size < 1024:
             issues.append(f"security.max_message_size too small, got {self.security.max_message_size}")
-        
+
+        # External-IdP OAuth2 (enterprise mode) must be fully specified: without a
+        # JWKS URL there is no key to verify with, and without a bound
+        # audience/issuer any token the IdP ever minted would be accepted here.
+        if self.oauth2.enabled and self.mode == "enterprise":
+            if not self.oauth2.jwks_url and not self.oauth2.local_public_key_path:
+                issues.append("oauth2 requires jwks_url or local_public_key_path")
+            if not self.oauth2.audience:
+                issues.append("oauth2.audience is required (expected token 'aud')")
+            if not self.oauth2.issuer:
+                issues.append("oauth2.issuer is required (expected token 'iss')")
+            for name in ("jwks_url", "token_url"):
+                url = getattr(self.oauth2, name)
+                if url:
+                    try:
+                        enforce_secure_url(url, allow_insecure=self.oauth2.allow_insecure)
+                    except ValueError as e:
+                        issues.append(f"oauth2.{name}: {e}")
+
         return issues
 
 

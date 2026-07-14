@@ -332,7 +332,7 @@ Generate the SQL query now:"""
         
         if sql_generation_result["status"] != "completed":
             print(f"   ❌ Qwen3 Coder SQL generation failed: {sql_generation_result.get('error')}")
-            print("   💡 Make sure Qwen3 Coder is installed: ollama pull qwen3_coder:30b-a3b-q4_K_M")
+            print("   💡 Make sure Qwen3 Coder is installed: ollama pull qwen3-coder:30b-a3b-q4_K_M")
             raise Exception("SQL generation failed - Qwen3 Coder 30B required for this workflow")
         
         generated_sql = sql_generation_result.get("final_data", {}).get("content", "").strip()
