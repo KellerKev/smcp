@@ -12,8 +12,8 @@ import requests
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
-from scp_config import SCPConfig
-from scp_federated_auth import FederatedSCPNode, create_test_jwt, DEMO_FEDERATION_NODES
+from smcp_config import SCPConfig
+from smcp_federated_auth import FederatedSCPNode, create_test_jwt, DEMO_FEDERATION_NODES
 from examples.secure_mcp_storage import SecureMCPStorageAgent
 
 

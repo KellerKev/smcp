@@ -19,7 +19,7 @@ import websockets
 import requests
 from urllib.parse import urlparse
 
-from smcp_config import SMCPConfig, ClusterConfig
+from smcp_config import SMCPConfig, SCPConfig, ClusterConfig
 from smcp_a2a import SMCPAgent, AgentInfo, AgentRegistry, Task
 from smcp_auth_enhanced import EnhancedSMCPSecurity, AuthResult
 from examples.secure_mcp_storage import SecureMCPStorageAgent

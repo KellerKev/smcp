@@ -262,3 +262,27 @@ def test_v3_interop_vector_unchanged():
     msg = types.SimpleNamespace(id="fixedid", type=types.SimpleNamespace(value="auth"),
                                 timestamp=1700000000.0, payload={"x": 1})
     assert sec.sign_message(msg) == "661c3041e7cc52690927113ca9bc39c08899613f94e7d770addecd349374f8ca"
+
+
+# --------------------------------------------------------------------------- #
+# encrypted-flag tamper detection (flag isn't in the HMAC, but the payload is)
+# --------------------------------------------------------------------------- #
+def test_flipping_encrypted_flag_to_false_is_rejected():
+    server, client, api = make_pair()
+    # A real encrypted message carries {"encrypted_data": ...} in its payload.
+    msg = client.create_message(MessageType.AUTH, {"api_key": api})
+    assert msg.encrypted and "encrypted_data" in msg.payload
+    # Attacker flips only the (unsigned) flag; the signed payload still shows
+    # ciphertext, so the mismatch must be caught.
+    msg.encrypted = False
+    resp = server.process_message(msg)
+    assert resp.type == MessageType.ERROR
+
+
+def test_flipping_encrypted_flag_to_true_is_rejected():
+    server, client, api = make_pair()
+    msg = client.create_message(MessageType.AUTH, {"api_key": api}, encrypt=False)
+    assert not msg.encrypted and "encrypted_data" not in msg.payload
+    msg.encrypted = True  # claim encryption over a plaintext (signed) payload
+    resp = server.process_message(msg)
+    assert resp.type == MessageType.ERROR

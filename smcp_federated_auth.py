@@ -26,6 +26,12 @@ import jwt
 from smcp_config import SCPConfig
 from smcp_core import SMCPMessage as SCPMessage, MessageType
 
+# Federation-wide issuer/audience binding. Client JWTs must carry these claims
+# so a token minted by the same signer for a *different* service cannot be
+# replayed into the federation, and audit logs reflect a real, bound identity.
+FEDERATION_ISSUER = "smcp-federation"
+FEDERATION_AUDIENCE = "smcp-federation"
+
 
 @dataclass
 class ForwardingProof:
@@ -34,6 +40,9 @@ class ForwardingProof:
     forwarded_by: str
     forwarded_at: float
     task_hash: str
+    # The node this proof is intended for. Verified at the receiver so a proof
+    # captured in transit cannot be replayed against a *different* node.
+    forwarded_to: str = ""
     nonce: str = field(default_factory=lambda: str(uuid.uuid4()))
     expires_at: float = field(default_factory=lambda: time.time() + 300)  # 5 minutes
 
@@ -57,6 +66,31 @@ class FederatedAuthManager:
         self.node_id = node_id
         self.jwt_secret = config.jwt_secret
         self.logger = logging.getLogger(f'federated_auth_{node_id}')
+
+        # JWT verification posture. With HS256 (default) every node shares one
+        # secret, so any node — or anyone who reads it — can mint tokens for any
+        # identity: a demo-grade trust model. Configure jwt_algorithm="RS256"
+        # with a public key so nodes can *verify* client tokens but cannot
+        # *forge* them; only the private-key holder (the client authority) mints.
+        self.jwt_algorithm = getattr(config.security, "jwt_algorithm", "HS256")
+        self._jwt_verify_key = None
+        if self.jwt_algorithm == "RS256":
+            key_path = getattr(config.security, "jwt_public_key_path", None)
+            if not key_path:
+                raise ValueError(
+                    "jwt_algorithm=RS256 requires security.jwt_public_key_path "
+                    "so nodes can verify (but not forge) client tokens."
+                )
+            with open(key_path, "rb") as f:
+                self._jwt_verify_key = f.read()
+            self.logger.info("Federated JWT verification: RS256 (verify-only, cannot forge)")
+        else:
+            self._jwt_verify_key = self.jwt_secret
+            self.logger.warning(
+                "Federated JWT verification: HS256 shared secret (demo-grade — "
+                "any node holding the secret can forge identities). Use RS256 in "
+                "multi-party deployments."
+            )
         
         # Session key management
         self.session_keys: Dict[str, SessionKey] = {}  # peer_node_id -> SessionKey
@@ -81,24 +115,29 @@ class FederatedAuthManager:
         )
     
     def validate_client_jwt(self, jwt_token: str) -> Dict[str, Any]:
-        """Validate client JWT token"""
+        """Validate a client JWT: signature (algorithm-pinned), expiry, and the
+        federation issuer/audience binding. PyJWT enforces exp/iat/aud/iss via
+        the decode options, so a token minted for another audience — or one that
+        is expired — is rejected before we look at any claim."""
         try:
-            payload = jwt.decode(jwt_token, self.jwt_secret, algorithms=['HS256'],
-                                 options={"require": ["exp", "iat"]})
-            
-            # Check expiration
-            if payload.get('exp', 0) < time.time():
-                raise jwt.ExpiredSignatureError("Token expired")
-            
-            # Validate required fields
-            required_fields = ['user', 'permissions', 'iat']
+            payload = jwt.decode(
+                jwt_token,
+                self._jwt_verify_key,
+                algorithms=[self.jwt_algorithm],
+                audience=FEDERATION_AUDIENCE,
+                issuer=FEDERATION_ISSUER,
+                options={"require": ["exp", "iat", "aud", "iss"]},
+            )
+
+            # Application-level required claims (beyond the registered ones).
+            required_fields = ['user', 'permissions']
             for field in required_fields:
                 if field not in payload:
                     raise jwt.InvalidTokenError(f"Missing required field: {field}")
-            
+
             self.logger.debug(f"Valid client JWT for user: {payload['user']}")
             return payload
-            
+
         except jwt.InvalidTokenError as e:
             self.logger.warning(f"Invalid JWT token: {e}")
             raise
@@ -126,22 +165,26 @@ class FederatedAuthManager:
         except jwt.InvalidTokenError:
             return False
     
-    def create_forwarding_proof(self, client_jwt: str, task: Dict[str, Any]) -> ForwardingProof:
-        """Create signed proof that we're forwarding a client request"""
+    def create_forwarding_proof(self, client_jwt: str, task: Dict[str, Any],
+                                target_node: str) -> ForwardingProof:
+        """Create signed proof that we're forwarding a client request to
+        target_node. The target is bound into the (signed) proof so it is only
+        valid at that node."""
         if not self.can_forward_for_client(client_jwt):
             raise PermissionError(f"Node {self.node_id} cannot forward for this client")
-        
+
         task_hash = hashlib.sha256(json.dumps(task, sort_keys=True).encode()).hexdigest()
-        
+
         proof = ForwardingProof(
             client_jwt=client_jwt,
             forwarded_by=self.node_id,
             forwarded_at=time.time(),
-            task_hash=task_hash
+            task_hash=task_hash,
+            forwarded_to=target_node
         )
-        
+
         return proof
-    
+
     def sign_forwarding_proof(self, proof: ForwardingProof) -> Dict[str, Any]:
         """Sign the forwarding proof to prevent tampering"""
         proof_data = {
@@ -149,6 +192,7 @@ class FederatedAuthManager:
             'forwarded_by': proof.forwarded_by,
             'forwarded_at': proof.forwarded_at,
             'task_hash': proof.task_hash,
+            'forwarded_to': proof.forwarded_to,
             'nonce': proof.nonce,
             'expires_at': proof.expires_at
         }
@@ -184,7 +228,17 @@ class FederatedAuthManager:
             if not hmac.compare_digest(provided_signature, expected_signature):
                 self.logger.warning("Invalid forwarding proof signature")
                 return False, None
-            
+
+            # Verify the proof was intended for THIS node — a proof captured on
+            # the wire cannot be replayed against a different target.
+            intended_target = proof_data.get('forwarded_to', '')
+            if intended_target and intended_target != self.node_id:
+                self.logger.warning(
+                    f"Forwarding proof target mismatch: intended {intended_target}, "
+                    f"received at {self.node_id}"
+                )
+                return False, None
+
             # Check expiration
             if proof_data['expires_at'] < time.time():
                 self.logger.warning("Forwarding proof expired")
@@ -211,6 +265,7 @@ class FederatedAuthManager:
                 forwarded_by=proof_data['forwarded_by'],
                 forwarded_at=proof_data['forwarded_at'],
                 task_hash=proof_data['task_hash'],
+                forwarded_to=proof_data.get('forwarded_to', ''),
                 nonce=proof_data['nonce'],
                 expires_at=proof_data['expires_at']
             )
@@ -338,8 +393,8 @@ class FederatedSCPNode:
     async def forward_request(self, task: Dict[str, Any], target_node: str, client_jwt: str) -> Dict[str, Any]:
         """Forward a client request to another node with token forwarding auth"""
         
-        # Create and sign forwarding proof
-        proof = self.auth_manager.create_forwarding_proof(client_jwt, task)
+        # Create and sign forwarding proof (bound to the target node)
+        proof = self.auth_manager.create_forwarding_proof(client_jwt, task, target_node)
         signed_proof = self.auth_manager.sign_forwarding_proof(proof)
         
         # Negotiate session key with target node
@@ -491,22 +546,28 @@ class FederatedSCPNode:
         }
 
 
-def create_test_jwt(user: str, permissions: List[str], forwarding_allowed: List[str] = None) -> str:
-    """Create a test JWT token for demonstration"""
+def create_test_jwt(user: str, permissions: List[str], forwarding_allowed: List[str] = None,
+                    secret: str = "test_jwt_secret_for_federated_auth_demo") -> str:
+    """Create a test JWT token for demonstration.
+
+    Emits the federation issuer/audience binding so the token validates against
+    validate_client_jwt. `secret` must match the verifying node's HS256 secret
+    (config.jwt_secret); pass it explicitly rather than relying on a coincidence.
+    """
     if forwarding_allowed is None:
         forwarding_allowed = ["*"]  # Allow forwarding to any node by default
-    
+
     payload = {
         'user': user,
         'permissions': permissions,
         'forwarding_allowed': forwarding_allowed,
+        'iss': FEDERATION_ISSUER,
+        'aud': FEDERATION_AUDIENCE,
         'iat': time.time(),
         'exp': time.time() + 3600  # 1 hour expiration
     }
-    
-    # Use a test secret (in production, this would be from config)
-    test_secret = "test_jwt_secret_for_federated_auth_demo"
-    return jwt.encode(payload, test_secret, algorithm='HS256')
+
+    return jwt.encode(payload, secret, algorithm='HS256')
 
 
 # Global federation registry for demo
@@ -521,7 +582,9 @@ async def demo_federated_authentication():
     # Create test configuration
     config = SCPConfig(
         node_id="demo_client",
-        jwt_secret="test_jwt_secret_for_federated_auth_demo"
+        jwt_secret="test_jwt_secret_for_federated_auth_demo",
+        secret_key="demo_secret_key_for_session_key_negotiation_0001",
+        kdf_salt="demo_federation_kdf_salt_0001",
     )
     
     # Create federated nodes

@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import jwt
 
-from scp_config import SCPConfig
+from smcp_config import SCPConfig
 
 
 @dataclass
@@ -113,27 +113,35 @@ class SimplifiedHandshakeManager:
         return secret
     
     def validate_one_time_secret(self, secret: str, client_id: str) -> bool:
-        """Validate a one-time secret"""
-        if secret not in self.one_time_secrets:
+        """Validate a one-time secret.
+
+        Uses a constant-time lookup so an attacker cannot distinguish
+        "unknown secret" from other failures by response timing, and consumes
+        any *matched* secret even on a client_id mismatch so a valid secret
+        cannot be probed repeatedly against different client ids.
+        """
+        # Constant-time membership test over the stored secrets.
+        matched_key = None
+        for stored in self.one_time_secrets:
+            if hmac.compare_digest(stored, secret):
+                matched_key = stored
+        if matched_key is None:
             self.logger.warning(f"Unknown one-time secret from {client_id}")
             return False
-        
-        secret_info = self.one_time_secrets[secret]
-        
+
+        # The secret exists and is now spent regardless of the outcome below.
+        secret_info = self.one_time_secrets.pop(matched_key)
+
         # Check expiration
         if secret_info["expires_at"] < time.time():
             self.logger.warning(f"Expired one-time secret from {client_id}")
-            del self.one_time_secrets[secret]  # Clean up expired secret
             return False
-        
+
         # Check client ID match (optional - can allow any client with valid secret)
         if secret_info["client_id"] != client_id and secret_info["client_id"] != "*":
             self.logger.warning(f"Client ID mismatch for secret: expected {secret_info['client_id']}, got {client_id}")
             return False
 
-        # Consume the secret: it is single-use, so a captured/replayed secret is
-        # rejected on the second attempt.
-        del self.one_time_secrets[secret]
         self.logger.info(f"Valid one-time secret from {client_id} (consumed)")
         return True
     

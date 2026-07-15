@@ -8,6 +8,7 @@ import asyncio
 import json
 import jwt
 import base64
+import hmac
 import os
 import time
 from typing import Dict, Any, Optional, Union, Tuple
@@ -22,7 +23,7 @@ import requests
 import aiohttp
 from urllib.parse import urljoin
 
-from smcp_config import SMCPConfig, OAuth2Config, CryptoConfig
+from smcp_config import SMCPConfig, SCPConfig, OAuth2Config, CryptoConfig
 
 
 class AuthMode(Enum):
@@ -265,8 +266,10 @@ class EnhancedSMCPSecurity:
     async def _authenticate_simple(self, credentials: Dict[str, Any]) -> AuthResult:
         """Simple API key authentication (backward compatible)"""
         api_key = credentials.get("api_key")
-        
-        if not api_key or api_key != self.api_key:
+
+        # Constant-time comparison so an attacker cannot recover the key byte by
+        # byte from response-timing differences.
+        if not api_key or not hmac.compare_digest(str(api_key), str(self.api_key)):
             return AuthResult(success=False, error="Invalid API key")
         
         # Generate JWT token
@@ -293,23 +296,54 @@ class EnhancedSMCPSecurity:
             return await self._authenticate_production_oauth2(credentials)
     
     async def _authenticate_development_oauth2(self, credentials: Dict[str, Any]) -> AuthResult:
-        """Development OAuth2 using local keys"""
+        """Development OAuth2 using local keys.
+
+        Even in development the token-mint path checks client credentials: it is
+        selectable via config.mode, so an unchecked "mint a token for any
+        client_id" branch would be a full auth bypass if dev mode were ever
+        enabled in a real deployment.
+        """
         # Simulate OAuth2 flow with local key validation
         token = credentials.get("access_token")
-        
+
         if not token:
+            # Refuse to mint if this instance has no private key (e.g. only a
+            # public key was loaded) — otherwise this raised AttributeError.
+            if not getattr(self, "jwt_private_key", None):
+                return AuthResult(
+                    success=False,
+                    error="Cannot mint development token: no signing key configured",
+                )
+
+            # Validate client credentials against configuration before minting.
+            expected_id = self.config.oauth2.client_id
+            expected_secret = self.config.oauth2.client_secret
+            provided_id = credentials.get("client_id")
+            provided_secret = credentials.get("client_secret")
+            if not expected_id or not expected_secret:
+                return AuthResult(
+                    success=False,
+                    error="Development OAuth2 requires oauth2.client_id and "
+                          "oauth2.client_secret to be configured before minting tokens",
+                )
+            if not provided_id or not provided_secret or not (
+                hmac.compare_digest(str(provided_id), str(expected_id))
+                and hmac.compare_digest(str(provided_secret), str(expected_secret))
+            ):
+                return AuthResult(success=False, error="Invalid client credentials")
+
             # Generate development token
             payload = {
-                "sub": credentials.get("client_id", "dev_client"),
+                "sub": provided_id,
                 "aud": "scp_api",
                 "iss": "scp_dev_auth",
                 "scope": self.config.oauth2.scope,
                 "iat": time.time(),
                 "exp": time.time() + 3600  # 1 hour
             }
-            
+
             token = jwt.encode(payload, self.jwt_private_key, algorithm="RS256")
-            
+
             return AuthResult(
                 success=True,
                 token=token,
@@ -570,45 +604,63 @@ class EnhancedSMCPSecurity:
             self.cleanup_session(session_id)
 
 
+# Backward-compatible alias: some callers refer to this class as
+# ``EnhancedSCPSecurity``; the canonical name is ``EnhancedSMCPSecurity``.
+EnhancedSCPSecurity = EnhancedSMCPSecurity
+
+
 # Example usage and testing
 async def demo_enhanced_auth():
     """Demonstrate enhanced authentication modes"""
     print("🔐 Enhanced SCP Authentication Demo")
     print("=" * 50)
     
+    import secrets as _secrets
+    demo_api_key = "cfg_" + _secrets.token_urlsafe(24)
+    demo_secrets = dict(
+        api_key=demo_api_key,
+        secret_key=_secrets.token_urlsafe(32),
+        jwt_secret=_secrets.token_urlsafe(32),
+        kdf_salt=_secrets.token_urlsafe(16),
+    )
+
     # Test 1: Simple mode (backward compatible)
     print("1. Testing Simple Mode (Backward Compatible)")
-    simple_config = SCPConfig(mode="simple")
+    simple_config = SCPConfig(mode="simple", **demo_secrets)
     simple_auth = EnhancedSCPSecurity(simple_config)
-    
+
     result = await simple_auth.authenticate({
-        "api_key": "demo_key_123",
+        "api_key": demo_api_key,
         "node_id": "test_client"
     })
-    
+
     if result.success:
         print(f"   ✓ Simple auth successful, token: {result.token[:50]}...")
     else:
         print(f"   ❌ Simple auth failed: {result.error}")
-    
-    # Test 2: Development OAuth2 mode
+
+    # Test 2: Development OAuth2 mode. Even in dev mode the mint path checks
+    # client credentials, so we configure and supply them.
     print("\n2. Testing Development OAuth2 Mode")
-    dev_config = SCPConfig(mode="development")
+    dev_config = SCPConfig(mode="development", **demo_secrets)
     dev_config.oauth2.enabled = True
+    dev_config.oauth2.client_id = "dev_client_123"
+    dev_config.oauth2.client_secret = _secrets.token_urlsafe(16)
     dev_auth = EnhancedSCPSecurity(dev_config)
-    
+
     result = await dev_auth.authenticate({
-        "client_id": "dev_client_123"
+        "client_id": dev_config.oauth2.client_id,
+        "client_secret": dev_config.oauth2.client_secret,
     })
-    
+
     if result.success:
         print(f"   ✓ Development OAuth2 successful, token: {result.token[:50]}...")
     else:
         print(f"   ❌ Development OAuth2 failed: {result.error}")
-    
+
     # Test 3: Key exchange
     print("\n3. Testing ECDH Key Exchange")
-    crypto_config = SCPConfig(mode="development")
+    crypto_config = SCPConfig(mode="development", **demo_secrets)
     crypto_config.crypto.key_exchange = "ecdh"
     crypto_auth = EnhancedSCPSecurity(crypto_config)
     

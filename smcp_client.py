@@ -12,7 +12,7 @@ import yaml
 from dataclasses import dataclass
 
 from smcp_core import SMCPNode, MessageType, SMCPMessage
-from smcp_config import SMCPConfig
+from smcp_config import SMCPConfig, SCPConfig
 
 
 class SMCPClient:

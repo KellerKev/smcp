@@ -56,6 +56,132 @@ def test_path_outside_data_dir_rejected():
     assert "outside" in (r.error or "").lower()
 
 
+from smcp_connector_base import QueryRequest, QueryType  # noqa: E402
+
+
+def _query(c, sql, qtype=QueryType.SELECT):
+    return asyncio.run(c.execute_query(
+        QueryRequest(query_id="q", query_type=qtype, query=sql)))
+
+
+def test_raw_query_file_read_blocked_by_default(tmp_path):
+    # The critical sandbox-escape: raw execute_query must not reach host files
+    # even though DuckDB's engine default for enable_external_access is True.
+    secret = tmp_path / "secret.csv"
+    secret.write_text("top,secret\n1,2\n")
+    c = duck()
+    asyncio.run(c.connect())
+    r = _query(c, f"SELECT * FROM read_csv_auto('{secret}')")
+    assert r.status == "error"
+    assert "not permitted" in (r.error or "").lower()
+
+
+def test_raw_query_copy_to_blocked_by_default(tmp_path):
+    c = duck()
+    asyncio.run(c.connect())
+    out = tmp_path / "exfil.csv"
+    r = _query(c, f"COPY (SELECT 1) TO '{out}'", QueryType.CUSTOM)
+    assert r.status == "error"
+    assert not out.exists()
+
+
+def test_raw_query_httpfs_url_blocked_by_default():
+    c = duck()
+    asyncio.run(c.connect())
+    r = _query(c, "SELECT * FROM read_csv_auto('https://evil.example.com/x.csv')")
+    assert r.status == "error"
+
+
+def test_normal_query_still_works():
+    c = duck()
+    asyncio.run(c.connect())
+    r = _query(c, "SELECT 42 AS x")
+    assert r.status == "success"
+    assert r.data == [{"x": 42}]
+
+
+def test_engine_external_access_flag_set_both_ways():
+    # The flag must be explicitly present in the engine config regardless of
+    # value (omitting it leaves DuckDB's insecure default of True in effect).
+    off = duck()
+    on = duck(enable_external_access=True)
+    # Inspect by connecting and querying the effective engine setting.
+    for c, expected in [(off, False), (on, True)]:
+        asyncio.run(c.connect())
+        val = c.connection.execute(
+            "SELECT current_setting('enable_external_access')").fetchone()[0]
+        assert bool(val) is expected, (expected, val)
+
+
+def test_allow_raw_file_sql_opt_in(tmp_path):
+    # Explicit opt-in permits raw file SQL.
+    data = tmp_path / "d.csv"
+    data.write_text("a,b\n1,2\n")
+    c = duck(allow_raw_file_sql=True)
+    asyncio.run(c.connect())
+    r = _query(c, f"SELECT * FROM read_csv_auto('{data}')")
+    assert r.status == "success"
+    assert r.row_count == 1
+
+
+# --------------------------------------------------------------------------- #
+# Filesystem extension allowlist (must apply to read/delete/list, not just write)
+# --------------------------------------------------------------------------- #
+def test_read_disallowed_extension_blocked(tmp_path):
+    base = tmp_path / "data"
+    base.mkdir()
+    (base / "creds.env").write_text("SECRET=1")
+    c = fs(base)
+    asyncio.run(c.connect())
+    with pytest.raises(Exception) as exc:
+        asyncio.run(c._read_file({"file_path": "creds.env"}))
+    assert "extension not allowed" in str(exc.value).lower()
+
+
+def test_delete_disallowed_extension_blocked(tmp_path):
+    base = tmp_path / "data"
+    base.mkdir()
+    secret = base / "key.pem"
+    secret.write_text("-----BEGIN-----")
+    c = fs(base)
+    asyncio.run(c.connect())
+    with pytest.raises(Exception):
+        asyncio.run(c._delete_file({"file_path": "key.pem"}))
+    assert secret.exists()  # not deleted
+
+
+def test_list_hides_disallowed_extensions(tmp_path):
+    base = tmp_path / "data"
+    base.mkdir()
+    (base / "notes.txt").write_text("hi")
+    (base / "creds.env").write_text("SECRET=1")
+    c = fs(base)
+    asyncio.run(c.connect())
+    res = asyncio.run(c._list_files({"directory": "."}))
+    names = {row["name"] for row in res["data"]}
+    assert "notes.txt" in names
+    assert "creds.env" not in names
+
+
+def test_symlink_inside_base_pointing_outside_rejected(tmp_path):
+    # Exercises the real containment branch (is_relative_to), not the ".." short
+    # circuit: a symlink that lives inside base_path but resolves outside it.
+    base = tmp_path / "data"
+    base.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret")
+    link = base / "escape.txt"
+    try:
+        link.symlink_to(outside / "secret.txt")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported on this platform")
+    c = fs(base)
+    asyncio.run(c.connect())
+    with pytest.raises(Exception):
+        asyncio.run(c._resolve_path("escape.txt"))
+
+
 # --------------------------------------------------------------------------- #
 # Filesystem connector
 # --------------------------------------------------------------------------- #

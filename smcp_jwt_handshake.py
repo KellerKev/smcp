@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 import jwt
 
-from scp_config import SCPConfig
+from smcp_config import SCPConfig
 
 
 @dataclass

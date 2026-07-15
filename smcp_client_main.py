@@ -12,7 +12,7 @@ from pathlib import Path
 from datetime import datetime
 import click
 
-from smcp_config import SMCPConfig, get_client_args, create_default_config
+from smcp_config import SMCPConfig, SCPConfig, get_client_args, create_default_config
 from smcp_client import SMCPClient, scp_client
 
 

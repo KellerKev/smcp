@@ -272,7 +272,16 @@ class MCPConnectionPool:
                 if conn:
                     self.connections.append(conn)
                     await self.available.put(conn)
-            
+
+            # Fail closed: a pool with zero live connections must not report
+            # success — otherwise every acquire() blocks forever on an empty
+            # queue with no error. Surface the failure to the caller instead.
+            if not self.connections:
+                raise ConnectionError(
+                    f"Connection pool for {self.config.name} has no live "
+                    f"connections (all {self.config.connection_pool_size} attempts failed)"
+                )
+
             self.initialized = True
             logger.info(f"Initialized connection pool for {self.config.name} with {len(self.connections)} connections")
     
@@ -290,11 +299,19 @@ class MCPConnectionPool:
         try:
             self._verify_transport_security()
             if self.config.protocol == "ws":
-                # WebSocket connection
-                return await websockets.connect(
-                    self.config.url,
-                    extra_headers=self._get_auth_headers()
-                )
+                # WebSocket connection. The header kwarg was renamed from
+                # extra_headers to additional_headers in websockets>=14; try the
+                # modern name first and fall back so the auth headers are always
+                # sent (silently dropping them would break authentication).
+                headers = self._get_auth_headers()
+                try:
+                    return await websockets.connect(
+                        self.config.url, additional_headers=headers
+                    )
+                except TypeError:
+                    return await websockets.connect(
+                        self.config.url, extra_headers=headers
+                    )
             elif self.config.protocol == "http":
                 # HTTP session
                 session = aiohttp.ClientSession(
@@ -328,15 +345,44 @@ class MCPConnectionPool:
         return headers
     
     async def acquire(self):
-        """Acquire a connection from pool"""
+        """Acquire a connection from pool, waiting at most `timeout` seconds so a
+        stalled/empty pool raises instead of hanging the caller forever."""
         if not self.initialized:
             await self.initialize()
-        
-        return await self.available.get()
-    
+
+        try:
+            return await asyncio.wait_for(
+                self.available.get(), timeout=self.config.timeout
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError(
+                f"Timed out acquiring a connection from the {self.config.name} pool"
+            )
+
     async def release(self, connection):
-        """Release connection back to pool"""
+        """Release a connection back to the pool. A connection that has died is
+        replaced with a fresh one rather than being handed back (which would
+        make that pool slot permanently serve a closed connection)."""
+        if self._is_dead(connection):
+            try:
+                self.connections.remove(connection)
+            except ValueError:
+                pass
+            replacement = await self._create_connection()
+            if replacement:
+                self.connections.append(replacement)
+                await self.available.put(replacement)
+            return
         await self.available.put(connection)
+
+    @staticmethod
+    def _is_dead(connection) -> bool:
+        """Best-effort check whether a pooled connection is no longer usable."""
+        if connection is None:
+            return True
+        # websockets: `closed` attr; aiohttp.ClientSession: `closed` attr.
+        closed = getattr(connection, "closed", None)
+        return bool(closed)
     
     async def close(self):
         """Close all connections"""
@@ -362,34 +408,46 @@ class MCPBridge:
         self.capability_index: Dict[str, List[str]] = {}  # capability -> [server_ids]
         
     async def register_server(self, config: MCPServerConfig) -> bool:
-        """Register an MCP server"""
+        """Register an MCP server. Only commit the server into the routing
+        tables once its pool is live — a partial registration would leave a
+        phantom server that _select_server routes tasks to, producing endless
+        KeyError-driven failures."""
+        pool = None
         try:
-            # Store server config
-            self.servers[config.server_id] = config
-            
-            # Create connection pool
+            # Create connection pool first (fails closed if unreachable).
             pool = MCPConnectionPool(config)
             await pool.initialize()
+
+            # Commit the server now that we know it is reachable.
+            self.servers[config.server_id] = config
             self.connection_pools[config.server_id] = pool
-            
+
             # Discover and index capabilities
             if not config.capabilities:
                 config.capabilities = await self._discover_server_capabilities(config)
-            
+
             # Map to SMCP capabilities
             smcp_capabilities = self.capability_mapper.discover_capabilities(config.capabilities)
-            
+
             # Update capability index
             for capability in smcp_capabilities:
                 if capability not in self.capability_index:
                     self.capability_index[capability] = []
                 self.capability_index[capability].append(config.server_id)
-            
+
             logger.info(f"Registered MCP server: {config.name} with capabilities: {smcp_capabilities}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to register MCP server {config.name}: {e}")
+            # Roll back any partial state so nothing routes to this server.
+            self.servers.pop(config.server_id, None)
+            self.connection_pools.pop(config.server_id, None)
+            if pool is not None:
+                try:
+                    await pool.close()
+                except Exception:
+                    pass
             return False
     
     async def _discover_server_capabilities(self, config: MCPServerConfig) -> List[str]:
@@ -512,7 +570,28 @@ class MCPBridge:
                     timeout=config.timeout
                 ) as resp:
                     return await resp.json()
-            
+
+            elif config.protocol == "sse":
+                # Server-Sent Events (e.g. MindsDB MCP): POST the JSON-RPC
+                # request and read the first `data:` event off the stream.
+                async with connection.post(
+                    config.url,
+                    json=request,
+                    headers={"Accept": "text/event-stream"},
+                    timeout=config.timeout,
+                ) as resp:
+                    content_type = resp.headers.get("Content-Type", "")
+                    if "text/event-stream" not in content_type:
+                        # Some servers answer a POST with a plain JSON body.
+                        return await resp.json()
+                    async for raw_line in resp.content:
+                        line = raw_line.decode("utf-8", errors="replace").strip()
+                        if line.startswith("data:"):
+                            payload = line[len("data:"):].strip()
+                            if payload and payload != "[DONE]":
+                                return json.loads(payload)
+                    return None
+
             else:
                 logger.error(f"Unsupported protocol: {config.protocol}")
                 return None

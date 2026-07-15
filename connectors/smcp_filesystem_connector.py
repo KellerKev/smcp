@@ -374,17 +374,29 @@ class FilesystemConnector(SMCPConnectorBase):
             }
         }
     
+    def _check_extension_allowed(self, path) -> None:
+        """Enforce the extension allowlist on every file-touching operation.
+
+        The allowlist is a security control: it must apply symmetrically to
+        read/delete, not only write, or an agent could read a co-located
+        secret (.env, .pem, .sqlite) the allowlist implies is off-limits.
+        """
+        suffix = Path(path).suffix.lower()
+        if suffix not in self.allowed_extensions:
+            raise Exception(f"File extension not allowed: {suffix or '(none)'}")
+
     async def _read_file(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Read file implementation"""
         file_path = params.get("file_path")
         encoding = params.get("encoding", "utf-8")
-        
+
         if not file_path:
             raise Exception("file_path parameter is required")
-        
+
         # Validate and resolve path
         full_path = await self._resolve_path(file_path)
-        
+        self._check_extension_allowed(full_path)
+
         if not full_path.exists():
             raise Exception(f"File does not exist: {file_path}")
         
@@ -451,7 +463,9 @@ class FilesystemConnector(SMCPConnectorBase):
             file_paths = dir_path.glob(pattern)
         
         for file_path in file_paths:
-            if file_path.is_file():
+            # Only enumerate files whose extension is on the allowlist, so the
+            # listing does not disclose co-located secrets.
+            if file_path.is_file() and file_path.suffix.lower() in self.allowed_extensions:
                 stats = file_path.stat()
                 files.append({
                     "file_path": str(file_path.relative_to(self.base_path)),
@@ -484,10 +498,11 @@ class FilesystemConnector(SMCPConnectorBase):
         
         # Validate and resolve path
         full_path = await self._resolve_path(file_path)
-        
+        self._check_extension_allowed(full_path)
+
         if not full_path.exists():
             raise Exception(f"File does not exist: {file_path}")
-        
+
         # Delete file
         full_path.unlink()
         

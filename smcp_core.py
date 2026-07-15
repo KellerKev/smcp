@@ -285,6 +285,24 @@ class SMCPNode:
         if not self._check_and_record_replay(message):
             return self.create_error_response(message.id, "Stale or replayed message rejected")
 
+        # The `encrypted` boolean is not itself covered by the HMAC (the v3
+        # signature — fixed for cross-language interop — spans id/type/ts/payload
+        # only). The payload IS signed, though, so require the flag to agree with
+        # the signed payload shape: an attacker flipping only the flag is caught
+        # here because it no longer matches the (tamper-proof) presence of
+        # "encrypted_data". An encrypted message with an empty payload carries no
+        # ciphertext, so that case is allowed.
+        payload = message.payload if isinstance(message.payload, dict) else {}
+        has_ciphertext = "encrypted_data" in payload
+        if has_ciphertext and not message.encrypted:
+            return self.create_error_response(
+                message.id, "Encrypted flag does not match payload"
+            )
+        if message.encrypted and payload and not has_ciphertext:
+            return self.create_error_response(
+                message.id, "Encrypted flag does not match payload"
+            )
+
         if message.encrypted and "encrypted_data" in message.payload:
             try:
                 message.payload = self.security.decrypt_payload(

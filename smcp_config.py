@@ -348,62 +348,38 @@ class SMCPConfig:
     
     @classmethod
     def merge_configs(cls, base: 'SCPConfig', override: 'SCPConfig') -> 'SCPConfig':
-        """Merge two configurations, with override taking precedence"""
-        # Create a new config starting with base
-        merged = cls()
-        
-        # Copy all fields from base
-        for field_name in ['node_id', 'server_url', 'api_key', 'secret_key', 'jwt_secret', 'kdf_salt', 'mode']:
-            setattr(merged, field_name, getattr(base, field_name))
-        
-        # Copy nested configurations
-        merged.server = ServerConfig(**base.server.__dict__)
-        merged.client = ClientConfig(**base.client.__dict__)
-        merged.ai = AIConfig(**base.ai.__dict__)
-        merged.security = SecurityConfig(**base.security.__dict__)
-        merged.logging = LoggingConfig(**base.logging.__dict__)
-        merged.custom_tools = base.custom_tools.copy()
-        
-        # Override with non-default values from override config
-        if override.node_id != cls().node_id:
-            merged.node_id = override.node_id
-        if override.server_url != cls().server_url:
-            merged.server_url = override.server_url
-        if override.api_key != cls().api_key:
-            merged.api_key = override.api_key
-        if override.secret_key != cls().secret_key:
-            merged.secret_key = override.secret_key
-        if override.jwt_secret != cls().jwt_secret:
-            merged.jwt_secret = override.jwt_secret
-        if override.kdf_salt != cls().kdf_salt:
-            merged.kdf_salt = override.kdf_salt
-        if override.mode != cls().mode:
-            merged.mode = override.mode
+        """Merge two configurations, with override taking precedence.
 
-        # Override nested configurations
-        for attr in ['host', 'port', 'max_connections', 'ping_interval', 'ping_timeout']:
-            if getattr(override.server, attr) != getattr(ServerConfig(), attr):
-                setattr(merged.server, attr, getattr(override.server, attr))
-        
-        for attr in ['auto_reconnect', 'reconnect_delay', 'max_retries', 'timeout', 'heartbeat_interval']:
-            if getattr(override.client, attr) != getattr(ClientConfig(), attr):
-                setattr(merged.client, attr, getattr(override.client, attr))
-        
-        for attr in ['ollama_url', 'default_model', 'timeout', 'max_tokens']:
-            if getattr(override.ai, attr) != getattr(AIConfig(), attr):
-                setattr(merged.ai, attr, getattr(override.ai, attr))
-        
-        for attr in ['require_signature', 'max_message_size', 'token_expiry', 'rate_limit']:
-            if getattr(override.security, attr) != getattr(SecurityConfig(), attr):
-                setattr(merged.security, attr, getattr(override.security, attr))
-        
-        for attr in ['level', 'file', 'max_size', 'backup_count', 'format']:
-            if getattr(override.logging, attr) != getattr(LoggingConfig(), attr):
-                setattr(merged.logging, attr, getattr(override.logging, attr))
-        
-        # Merge custom tools
-        merged.custom_tools.update(override.custom_tools)
-        
+        Every top-level scalar and every nested dataclass (server, client, ai,
+        security, logging, oauth2, crypto, cluster) is merged field-by-field:
+        an override field wins whenever it differs from its default. This is
+        done generically over the dataclass fields so that no setting — TLS,
+        JWT algorithm/key paths, the whole OAuth2/crypto/cluster blocks — is
+        ever silently dropped when a config file is loaded.
+        """
+        import copy
+        from dataclasses import fields, is_dataclass
+
+        merged = copy.deepcopy(base)
+        defaults = cls()
+
+        def merge_into(dst, src, dflt):
+            for f in fields(src):
+                # custom_tools is merged as a union, handled by the caller.
+                if f.name == 'custom_tools':
+                    continue
+                src_val = getattr(src, f.name)
+                dflt_val = getattr(dflt, f.name)
+                if is_dataclass(src_val) and not isinstance(src_val, type):
+                    merge_into(getattr(dst, f.name), src_val, dflt_val)
+                elif src_val != dflt_val:
+                    setattr(dst, f.name, copy.deepcopy(src_val))
+
+        merge_into(merged, override, defaults)
+
+        # Custom tools are unioned (override wins on key collisions).
+        merged.custom_tools = {**base.custom_tools, **override.custom_tools}
+
         return merged
     
     def to_dict(self) -> Dict[str, Any]:
@@ -419,11 +395,17 @@ class SMCPConfig:
             'secret_key': self.secret_key,
             'jwt_secret': self.jwt_secret,
             'kdf_salt': self.kdf_salt,
+            'mode': self.mode,
             'server': clean_dict(self.server.__dict__),
             'client': clean_dict(self.client.__dict__),
             'ai': clean_dict(self.ai.__dict__),
             'security': clean_dict(self.security.__dict__),
             'logging': clean_dict(self.logging.__dict__),
+            # Enterprise blocks must round-trip too, or to_file() would silently
+            # drop OAuth2/crypto/cluster settings the way merge_configs used to.
+            'oauth2': clean_dict(self.oauth2.__dict__),
+            'crypto': clean_dict(self.crypto.__dict__),
+            'cluster': clean_dict(self.cluster.__dict__),
             'custom_tools': self.custom_tools
         }
     

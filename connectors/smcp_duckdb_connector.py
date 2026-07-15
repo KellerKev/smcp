@@ -42,6 +42,21 @@ from pathlib import Path
 # bind identifiers as parameters, so we allow only a conservative charset.
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# SQL constructs that reach the host filesystem, the network, or the extension
+# loader. Raw queries submitted to execute_query are screened for these; touching
+# files is only allowed through the confined helper methods (which bind paths
+# under data_dir) unless a deployment explicitly opts into raw file SQL.
+_FILE_ACCESS_RE = re.compile(
+    r"\b("
+    r"read_csv|read_csv_auto|read_parquet|read_json|read_json_auto|read_ndjson|"
+    r"read_text|read_blob|parquet_scan|csv_scan|glob|"
+    r"copy|install|load|attach|"
+    r"httpfs|read_json_objects"
+    r")\b"
+    r"|\b(?:https?|s3|gcs|azure|hf|r2)://",
+    re.IGNORECASE,
+)
+
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -72,6 +87,12 @@ class DuckDBConnector(SMCPConnectorBase):
         # fetch remote URLs (read_csv_auto, COPY ... TO, httpfs). It defaults to
         # OFF and must be explicitly opted into per deployment.
         self.enable_external_access = config.connection_params.get("enable_external_access", False)
+        # Even when external access is enabled at the engine level, raw queries
+        # submitted through execute_query are screened for file/network/extension
+        # access so they cannot escape data_dir. Sanctioned file loading goes
+        # through the confined helper methods. Set this True to allow arbitrary
+        # file SQL on the raw path (implies enable_external_access).
+        self.allow_raw_file_sql = config.connection_params.get("allow_raw_file_sql", False)
         self.threads = config.connection_params.get("threads", 4)
         self.memory_limit = config.connection_params.get("memory_limit", "1GB")
         # File operations are confined to this directory (resolved, symlink-safe).
@@ -99,6 +120,22 @@ class DuckDBConnector(SMCPConnectorBase):
         if resolved != self.data_dir and self.data_dir not in resolved.parents:
             raise ValueError(f"Path {file_path!r} is outside the allowed data directory")
         return str(resolved)
+
+    def _screen_raw_query(self, query: str) -> None:
+        """Reject raw queries that reach the host filesystem, network, or
+        extension loader, unless the deployment has opted into raw file SQL.
+        Sanctioned file loading goes through the confined helper methods."""
+        if self.allow_raw_file_sql:
+            return
+        if not isinstance(query, str):
+            raise ValueError("Query must be a string")
+        if _FILE_ACCESS_RE.search(query):
+            raise ValueError(
+                "Query rejected: file/network/extension access is not permitted "
+                "on the raw query path. Load files via bulk_insert_from_file / "
+                "create_table_from_file (confined to data_dir), or set "
+                "allow_raw_file_sql=True to allow arbitrary file SQL."
+            )
     
     async def connect(self) -> bool:
         """
@@ -116,8 +153,13 @@ class DuckDBConnector(SMCPConnectorBase):
                 config['threads'] = self.threads
             if self.memory_limit:
                 config['memory_limit'] = self.memory_limit
-            if self.enable_external_access:
-                config['enable_external_access'] = True
+            # SECURITY: DuckDB's engine default for this setting is True, so it
+            # MUST be set explicitly on both branches — omitting it leaves the
+            # host filesystem/network reachable from SQL. Raw file SQL requires
+            # opting into external access too.
+            config['enable_external_access'] = bool(
+                self.enable_external_access or self.allow_raw_file_sql
+            )
             
             self.connection = duckdb.connect(
                 database=self.database_path,
@@ -175,7 +217,15 @@ class DuckDBConnector(SMCPConnectorBase):
         
         if not self.is_connected:
             return self.create_error_result(request.query_id, "Not connected to database")
-        
+
+        # SECURITY: screen the raw SQL for host filesystem/network/extension
+        # access before it reaches the engine (defense-in-depth on top of the
+        # engine-level enable_external_access flag).
+        try:
+            self._screen_raw_query(request.query)
+        except ValueError as e:
+            return self.create_error_result(request.query_id, str(e))
+
         try:
             self.logger.debug(f"Executing query {request.query_id}: {request.query[:100]}...")
             

@@ -93,7 +93,9 @@ class SMCPServer:
         elif operation == "multiply":
             return a * b
         elif operation == "divide":
-            return a / b if b != 0 else 0
+            if b == 0:
+                raise ValueError("division by zero")
+            return a / b
         else:
             raise ValueError(f"Unknown operation: {operation}")
     
@@ -166,6 +168,10 @@ class SMCPServer:
     async def handle_client(self, websocket):
         """Handle client connection"""
         client_addr = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+        # Rate limiting is keyed on the client IP, not ip:port — otherwise every
+        # new TCP connection is a fresh bucket, so an attacker multiplies their
+        # allowance by opening parallel connections (or resets it by reconnecting).
+        client_ip = websocket.remote_address[0]
 
         # Enforce the concurrent-connection cap (fail closed, don't grow unbounded).
         max_conns = self.config.security.max_connections
@@ -180,21 +186,28 @@ class SMCPServer:
         try:
             async for raw_message in websocket:
                 try:
-                    # Per-client rate limiting.
-                    if not self._allow_request(client_addr):
-                        await websocket.send(json.dumps({
-                            "type": "error",
-                            "payload": {"error": "Rate limit exceeded"},
-                            "timestamp": datetime.now().timestamp()
-                        }))
+                    # Per-client rate limiting (keyed on IP, see above).
+                    if not self._allow_request(client_ip):
+                        # Send a properly signed protocol error the client can
+                        # parse and verify (a raw dict lacks "id"/signature and
+                        # crashes the client's from_dict/verify path).
+                        err = self.node.create_error_response("", "Rate limit exceeded")
+                        await websocket.send(json.dumps(err.to_dict()))
                         continue
 
                     # Parse message
                     message_data = json.loads(raw_message)
                     message = SMCPMessage.from_dict(message_data)
 
-                    # Process message
-                    response = self.node.process_message(message)
+                    # Process message. Tool handlers are synchronous and may
+                    # block (e.g. the AI handler does a 30s HTTP call), so run
+                    # dispatch in a worker thread — otherwise one slow handler
+                    # freezes the whole event loop: every other connection, all
+                    # responses, and the ping/pong keepalives stall until it
+                    # returns. Offloading keeps the server responsive.
+                    response = await asyncio.get_running_loop().run_in_executor(
+                        None, self.node.process_message, message
+                    )
 
                     # Send response
                     if response:
@@ -202,14 +215,13 @@ class SMCPServer:
 
                 except json.JSONDecodeError:
                     self.logger.error("Invalid JSON received")
+                    err = self.node.create_error_response("", "Invalid JSON")
+                    await websocket.send(json.dumps(err.to_dict()))
                 except Exception as e:
                     self.logger.error(f"Message processing error: {e}")
-                    error_response = {
-                        "type": "error",
-                        "payload": {"error": "Message processing failed"},
-                        "timestamp": datetime.now().timestamp()
-                    }
-                    await websocket.send(json.dumps(error_response))
+                    # Signed protocol error so the client can parse + verify it.
+                    err = self.node.create_error_response("", "Message processing failed")
+                    await websocket.send(json.dumps(err.to_dict()))
 
         except websockets.exceptions.ConnectionClosed:
             pass
@@ -313,6 +325,11 @@ async def example_server():
     
     # Start server
     await server.start()
+
+
+# Backward-compatible alias: some callers/examples refer to the server class as
+# ``SCPServer``; the canonical name is ``SMCPServer``.
+SCPServer = SMCPServer
 
 
 if __name__ == "__main__":

@@ -39,14 +39,20 @@ with an audit trail (see [Security modes](#-security-modes) below).
 > **Status, honestly:** SMCP's *core* — auth (API-key / JWT / RS256), per-message encryption,
 > replay protection, per-tool authorization, TLS enforcement, fail-closed config, the connectors,
 > and external-IdP OAuth2 — is security-hardened and covered by an automated test suite (`pixi run
-> test`). What is still **demo-grade**: the distributed /
-> agent-to-agent layer runs today as a localhost *simulation* rather than real multi-node
-> networking, and the integrations (CrewAI, MindsDB) and the OAuth2 flow are exercised against
-> local/mock services, not a production identity provider. There has been no external security
-> audit and it isn't yet running in production. Treat the security core as reusable; treat the
-> distributed/A2A and integration pieces as working demonstrations. The same core is used in the
-> [RIXI](https://github.com/KellerKev/rixi) agent (`agent/smcp.py`) to share tools securely between
-> agents over an untrusted link.
+> test`, 106 tests). The DuckDB connector fails closed at the engine level (host filesystem/network
+> access is off unless opted in, and raw SQL is screened for file/network/extension access); the
+> filesystem connector enforces its extension allowlist symmetrically on read/delete/list; and
+> `SMCPConfig.load()` preserves every setting (TLS, JWT algorithm, and the full OAuth2/crypto/cluster
+> blocks) rather than silently dropping them. Federated client tokens are audience/issuer-bound and
+> support RS256 verify-only mode so one node cannot forge another's identity. What is still
+> **demo-grade**: the distributed / agent-to-agent layer runs today as a localhost *simulation*
+> rather than real multi-node networking, the federated trust model defaults to a shared HS256 secret
+> (RS256 recommended for multi-party), and the integrations (CrewAI, MindsDB) and the OAuth2 flow are
+> exercised against local/mock services, not a production identity provider. There has been no
+> external security audit and it isn't yet running in production. Treat the security core as reusable;
+> treat the distributed/A2A and integration pieces as working demonstrations. The same core is used in
+> the [RIXI](https://github.com/KellerKev/rixi) agent (`agent/smcp.py`) to share tools securely
+> between agents over an untrusted link.
 
 ## 📚 Documentation
 
@@ -103,9 +109,12 @@ key-rotation cases.
 
 ### 🔌 Native Connectors
 
-- **DuckDB**: high-performance analytical queries. Filesystem/network access is **off by default**;
-  identifiers are validated and file paths are confined to a configured directory.
-- **Filesystem**: secure local storage with symlink-safe path containment and read/write size caps.
+- **DuckDB**: high-performance analytical queries. Filesystem/network access is **off by default**,
+  enforced at the DuckDB engine level (`enable_external_access`); raw SQL is screened for
+  file/network/extension access, identifiers are validated, and sanctioned file loads are confined to
+  a configured directory. Opt into raw file SQL explicitly with `allow_raw_file_sql`.
+- **Filesystem**: secure local storage with symlink-safe path containment, an extension allowlist
+  enforced on read/delete/list (not just write), and read/write size caps.
 - **Extensible**: easy to add custom connectors.
 
 ### 🏗️ Technical Features
@@ -342,14 +351,16 @@ This project is licensed under the MIT License.
 
 ## 🚦 Status
 
-- ✅ **Core SMCP**: security-hardened and test-covered
+- ✅ **Core SMCP**: security-hardened and test-covered (106 tests)
 - ✅ **Basic/Encrypted modes**: security-hardened, test-covered
 - 🚧 **A2A System**: working prototype (localhost simulation) with per-tool authorization
-- ✅ **DuckDB / Filesystem connectors**: hardened example implementations
+- ✅ **DuckDB / Filesystem connectors**: hardened, fail-closed by default, test-covered
 - ✅ **CrewAI Integration**: working demo (in the `integrations` env)
 - ✅ **MindsDB integration**: working demo (requires a MindsDB container)
 - ✅ **Enterprise / OAuth2 mode**: external-IdP token validation, hardened and test-covered
   (JWKS + static-key), verified against a mock OIDC provider
+- 🚧 **Federated auth**: audience/issuer-bound tokens with RS256 verify-only support and a
+  test suite; defaults to a shared HS256 secret (use RS256 for multi-party trust)
 
 ---
 

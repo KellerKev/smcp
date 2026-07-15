@@ -139,10 +139,34 @@ async def test_alg_none_token_rejected(oidc):
 
 
 async def test_hs256_confusion_rejected(oidc):
-    # Attacker signs HS256 using the (public) JWKS material; RS256 pinning rejects it.
-    forged = jwt.encode({"sub": "x", "aud": AUDIENCE, "iss": ISSUER,
-                         "iat": int(time.time()), "exp": int(time.time()) + 60},
-                        key="public-ish-secret", algorithm="HS256")
+    # Classic RS256->HS256 key-confusion attack: the attacker signs an HS256
+    # token using the server's *public* RSA key (readable from the JWKS) as the
+    # HMAC secret. A verifier that derived the HMAC key from the JWKS public key
+    # would accept it; RS256 algorithm-pinning must reject it.
+    #
+    # PyJWT refuses to HMAC-sign with an asymmetric key, so we hand-craft the
+    # token to exercise the *verifier* directly rather than PyJWT's sign guard.
+    import base64
+    import hashlib
+    import hmac as _hmac
+    from cryptography.hazmat.primitives import serialization
+
+    pub_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(oidc.jwk))
+    pub_pem = pub_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+    def b64(raw: bytes) -> bytes:
+        return base64.urlsafe_b64encode(raw).rstrip(b"=")
+
+    header = b64(json.dumps({"alg": "HS256", "typ": "JWT", "kid": oidc.kid}).encode())
+    payload = b64(json.dumps({"sub": "x", "aud": AUDIENCE, "iss": ISSUER,
+                              "iat": int(time.time()), "exp": int(time.time()) + 60}).encode())
+    signing_input = header + b"." + payload
+    sig = b64(_hmac.new(pub_pem, signing_input, hashlib.sha256).digest())
+    forged = (signing_input + b"." + sig).decode()
+
     r = await _auth(_config(oidc), {"access_token": forged})
     assert not r.success
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from datetime import datetime
 import click
 
-from smcp_config import SMCPConfig, get_server_args, create_default_config
+from smcp_config import SMCPConfig, SCPConfig, get_server_args, create_default_config
 from smcp_server import SMCPServer, tool
 
 
@@ -173,7 +173,9 @@ def main(config, create_config, node_id, host, port, api_key, log_level,
         click.echo(f"   Host: {scp_config.server.host}")
         click.echo(f"   Port: {scp_config.server.port}")
         click.echo(f"   Max Connections: {scp_config.server.max_connections}")
-        click.echo(f"   API Key: {scp_config.api_key[:8]}...")
+        # Never echo any part of the API key — even a prefix leaks secret material
+        # into terminal scrollback and CI logs.
+        click.echo(f"   API Key: {'<set>' if scp_config.api_key else '<unset>'}")
         click.echo(f"   AI Model: {scp_config.ai.default_model}")
         click.echo(f"   Log Level: {scp_config.logging.level}")
         
