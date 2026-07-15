@@ -52,14 +52,8 @@ with an audit trail (see [Security modes](#-security-modes) below).
 > test suite). Federated auth supports an RS256 issuer — one node mints tokens with a private key,
 > peers verify with the public key and cannot forge — with audience/issuer-bound tokens and
 > target-bound forwarding proofs.
->
-> Still deferred: pluggable discovery (Consul/etcd/DNS — static config-driven discovery only),
-> forward-secret ECDH session keys (shared-secret HKDF today), and per-node asymmetric forwarding
-> proofs. The integrations (CrewAI, MindsDB) and the OAuth2 flow are exercised against local/mock
-> services, not a production identity provider; there has been no external security audit and it
-> isn't yet running in production. The same core is used in the
-> [RIXI](https://github.com/KellerKev/rixi) agent (`agent/smcp.py`) to share tools securely between
-> agents over an untrusted link.
+
+See the [Roadmap](ROADMAP.md) for what's deferred and current limitations.
 
 ## 📚 Documentation
 
