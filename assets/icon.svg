@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="SMCP">
+  <defs>
+    <linearGradient id="smcp-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7C5CFF"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+  </defs>
+  <!-- transit line between two agent nodes -->
+  <line x1="24" y1="64" x2="104" y2="64" stroke="url(#smcp-grad)" stroke-width="3" stroke-dasharray="2 7" stroke-linecap="round" opacity="0.65"/>
+  <!-- agent nodes -->
+  <circle cx="20" cy="64" r="8" fill="url(#smcp-grad)"/>
+  <circle cx="108" cy="64" r="8" fill="url(#smcp-grad)"/>
+  <!-- encrypted packet (rotated rounded square) -->
+  <g transform="rotate(45 64 64)">
+    <rect x="40" y="40" width="48" height="48" rx="12" fill="none" stroke="url(#smcp-grad)" stroke-width="6"/>
+  </g>
+  <!-- keyhole = encryption -->
+  <g fill="url(#smcp-grad)">
+    <circle cx="64" cy="60" r="7"/>
+    <path d="M60 64 h8 l2 14 h-12 z"/>
+  </g>
+</svg>

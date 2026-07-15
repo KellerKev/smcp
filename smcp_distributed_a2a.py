@@ -64,7 +64,11 @@ class DistributedNodeRegistry:
         self.nodes: Dict[str, DistributedNode] = {}
         self.local_agents: Dict[str, SMCPAgent] = {}
         self.logger = logging.getLogger('distributed_registry')
-        
+        # Real peer transport (PeerConnectionPool), set by the owning agent when
+        # not in simulate_distributed mode. When present, health checks and
+        # cross-node calls go over the real SMCP WebSocket RPC.
+        self.peer_pool = None
+
         # Initialize nodes from config
         self._initialize_nodes()
     
@@ -212,38 +216,43 @@ class DistributedNodeRegistry:
         return nodes[0] if nodes else None
     
     async def health_check_node(self, node: DistributedNode) -> bool:
-        """Perform health check on a node"""
+        """Health-check a node over the real SMCP WebSocket RPC.
+
+        A node is healthy iff it accepts an authenticated handshake. In
+        simulate_distributed mode (no peer_pool), nodes are treated as healthy
+        without a probe, as before.
+        """
+        if self.peer_pool is None:
+            # Simulation mode: no real network to probe.
+            node.status = NodeStatus.ONLINE
+            node.last_heartbeat = time.time()
+            return True
         try:
-            # Simple HTTP health check (in real implementation, use proper SCP protocol)
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                health_url = f"http://{node.host}:{node.port}/health"
-                async with session.get(health_url, timeout=5) as response:
-                    if response.status == 200:
-                        node.status = NodeStatus.ONLINE
-                        node.last_heartbeat = time.time()
-                        return True
-            
+            ok = await self.peer_pool.health(node.node_id, node.host, node.port)
         except Exception as e:
             self.logger.warning(f"Health check failed for {node.node_id}: {e}")
+            ok = False
+        if ok:
+            node.status = NodeStatus.ONLINE
+            node.last_heartbeat = time.time()
+        else:
             node.status = NodeStatus.ERROR
-            return False
-    
+        return ok
+
     async def discover_nodes(self):
-        """Discover and update node status"""
+        """Discover and update node status."""
         if self.config.discovery_method == "static":
-            # Simple health check for static nodes
-            tasks = []
-            for node in self.nodes.values():
-                tasks.append(self.health_check_node(node))
+            # Health-check every statically configured node.
+            tasks = [self.health_check_node(node) for node in self.nodes.values()]
             await asyncio.gather(*tasks, return_exceptions=True)
-        
-        elif self.config.discovery_method == "consul":
-            # TODO: Implement Consul service discovery
-            pass
-        elif self.config.discovery_method == "etcd":
-            # TODO: Implement etcd service discovery
-            pass
+        elif self.config.discovery_method in ("consul", "etcd", "dns"):
+            # Fail honestly rather than silently succeeding with zero discovery.
+            raise NotImplementedError(
+                f"discovery_method={self.config.discovery_method!r} is not "
+                f"implemented; use 'static' with an explicit cluster.nodes list."
+            )
+        else:
+            raise ValueError(f"Unknown discovery_method: {self.config.discovery_method!r}")
 
 
 class DistributedA2AAgent(SMCPAgent):
@@ -259,6 +268,15 @@ class DistributedA2AAgent(SMCPAgent):
         self.security = EnhancedSMCPSecurity(config)
         self.remote_connections: Dict[str, Any] = {}
         self.encrypted_storage = encrypted_storage
+
+        # Real cross-node transport. Outside simulate_distributed mode, peers are
+        # reached over the authenticated SMCP WebSocket RPC via a shared pool of
+        # SMCPClients (see smcp_distributed_transport).
+        self.peer_pool = None
+        if not cluster_registry.config.simulate_distributed:
+            from smcp_distributed_transport import PeerConnectionPool
+            self.peer_pool = PeerConnectionPool(config)
+            cluster_registry.peer_pool = self.peer_pool
         
         # Initialize secure MCP storage agent only if encrypted storage is enabled
         if encrypted_storage:
@@ -268,10 +286,36 @@ class DistributedA2AAgent(SMCPAgent):
         
         # Register self in cluster
         self.cluster_registry.register_local_agent(self)
-        
+
         # Register distributed capabilities
         self._register_distributed_capabilities()
-    
+
+    def _distributed_dispatch(self, task: Dict[str, Any]) -> Any:
+        """Run a task delegated from a peer over the network.
+
+        This is the receiving side of a real cross-node call: a peer invokes the
+        ``distributed_task_execute`` capability, and we execute it through the
+        same real handler-dispatch used locally (``_execute_task``).
+        """
+        t = Task(
+            task_id=task.get("task_id", str(uuid.uuid4())),
+            type=task.get("task_type"),
+            description=f"Delegated task: {task.get('task_type')}",
+            input_data=task.get("task_data", {}),
+        )
+        return self._execute_task(t, self.agent_info)
+
+    def make_task_server(self, config: Optional[SMCPConfig] = None):
+        """Build a DistributedTaskServer that serves this agent's real dispatch.
+
+        Run one per node so peers can reach it over the SMCP WebSocket RPC. The
+        server exposes the ``distributed_task_execute`` capability wired to
+        ``_distributed_dispatch``. Pass a config whose ``server`` host/port is the
+        address this node should bind (defaults to this agent's config).
+        """
+        from smcp_distributed_transport import DistributedTaskServer
+        return DistributedTaskServer(config or self.config, self._distributed_dispatch)
+
     def _register_distributed_capabilities(self):
         """Register distributed A2A capabilities"""
         from smcp_core import Capability
@@ -762,41 +806,26 @@ class DistributedA2AAgent(SMCPAgent):
         }
     
     async def _real_cross_server_request(self, target_node: DistributedNode, task_data: Dict[str, Any]) -> Any:
-        """Real cross-server request over TLS with an encrypted, authenticated payload.
+        """Send a task to a peer over the real SMCP WebSocket RPC.
 
-        Fails closed rather than degrading to plaintext: if no real cipher is
-        available, or if the target is not reachable over TLS, this raises instead
-        of silently POSTing cleartext (the previous behaviour advertised
-        AES-256-GCM while sending plaintext over http://).
+        Reuses SMCP's authenticated, signed, optionally-TLS transport (handshake
+        -> auth -> tool-invoke). The protocol already encrypts and signs the
+        payload, so no separate transit envelope is needed. The peer serves the
+        ``distributed_task_execute`` capability (see DistributedTaskServer);
+        transport security (wss/TLS vs loopback plaintext) is enforced by
+        SMCPClient.connect exactly as for any other client.
         """
-        import aiohttp
+        from smcp_distributed_transport import DISTRIBUTED_TASK_TOOL
 
-        envelope = self._encrypt_task_for_transit(task_data)
-        token = await self._get_cross_server_token(target_node)
-
-        # Require TLS. Plaintext transit is only permitted for an explicit
-        # loopback target, never for a remote host.
-        from smcp_config import enforce_secure_url, build_client_ssl_context
-        import ssl as _ssl
-        allow_insecure = bool(self.config.security.allow_insecure_transit)
-        host = target_node.host
-        scheme = "https" if self.config.security.tls_enabled else "http"
-        url = f"{scheme}://{host}:{target_node.port}/api/task"
-        enforce_secure_url(url, allow_insecure=allow_insecure)
-
-        ssl_ctx = build_client_ssl_context(self.config)
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-        }
-
-        connector = aiohttp.TCPConnector(ssl=ssl_ctx) if ssl_ctx else None
-        async with aiohttp.ClientSession(connector=connector) as session:
-            async with session.post(url, json=envelope, headers=headers) as response:
-                if response.status != 200:
-                    raise Exception(f"Cross-server request failed: {response.status}")
-                data = await response.json()
-                return self._decrypt_task_from_transit(data)
+        if self.peer_pool is None:
+            raise RuntimeError(
+                "No peer transport available (simulate_distributed is set, or the "
+                "agent was constructed without a real cluster)."
+            )
+        return await self.peer_pool.call(
+            target_node.node_id, target_node.host, target_node.port,
+            DISTRIBUTED_TASK_TOOL, task=task_data,
+        )
     
     async def _get_cross_server_token(self, target_node: DistributedNode) -> str:
         """Get authentication token for cross-server communication"""
@@ -822,23 +851,32 @@ class DistributedA2AAgent(SMCPAgent):
             raise Exception(f"No local agent found with capability: {capability}")
         
         agent = local_agents[0]  # Use first available
-        
+
         # Execute task using agent's capabilities
         task_type = task_data.get("task_type")
-        
+
+        # Capability handlers are synchronous (see smcp_core.register_capability),
+        # so they must NOT be awaited — awaiting the returned dict raises
+        # "object dict can't be used in 'await' expression". Run them in a worker
+        # thread so a blocking handler (e.g. an ollama call) doesn't stall the
+        # event loop, mirroring smcp_server.handle_client.
+        loop = asyncio.get_running_loop()
+
         # Map to agent's tool handlers
         if hasattr(agent, 'tool_handlers') and task_type in agent.tool_handlers:
-            return await agent.tool_handlers[task_type](**task_data.get("task_data", {}))
+            handler = agent.tool_handlers[task_type]
+            kwargs = task_data.get("task_data", {})
+            return await loop.run_in_executor(None, lambda: handler(**kwargs))
         else:
-            # Fallback to generic task execution
-            return await agent._simulate_task_execution(
-                Task(
-                    task_id=task_data["task_id"],
-                    type=task_type,
-                    description=f"Local workflow step: {task_type}",
-                    input_data=task_data.get("task_data", {})
-                ),
-                agent.agent_info
+            # Fallback to generic task dispatch.
+            task = Task(
+                task_id=task_data["task_id"],
+                type=task_type,
+                description=f"Local workflow step: {task_type}",
+                input_data=task_data.get("task_data", {})
+            )
+            return await loop.run_in_executor(
+                None, agent._simulate_task_execution, task, agent.agent_info
             )
     
     async def _execute_local_collaboration_task(self, task_data: Dict[str, Any], capability: str) -> Any:

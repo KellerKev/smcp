@@ -380,10 +380,42 @@ class FederatedSCPNode:
         self.node_id = node_id
         self.auth_manager = FederatedAuthManager(config, node_id)
         self.logger = logging.getLogger(f'federated_node_{node_id}')
-        
+
         # Known peers in the federation
         self.peers: Dict[str, str] = {}  # node_id -> endpoint
-    
+
+        # Real cross-node transport (opt-in). When enabled, forward_request goes
+        # over the authenticated SMCP WebSocket RPC instead of the in-process
+        # DEMO_FEDERATION_NODES mock used by the demo/tests.
+        self.peer_pool = None
+
+    def enable_real_transport(self, transport_config: 'SCPConfig' = None):
+        """Route forwarded requests over the real SMCP WebSocket transport.
+
+        Reuses the same PeerConnectionPool as the distributed layer. Peers must
+        run a forward server (see :meth:`make_forward_server`)."""
+        from smcp_distributed_transport import PeerConnectionPool
+        self.peer_pool = PeerConnectionPool(transport_config or self.config)
+
+    def make_forward_server(self, config: 'SCPConfig' = None):
+        """Build a server exposing the ``federated_forward`` capability so peers
+        can deliver forwarded requests over the real transport."""
+        from smcp_distributed_transport import DistributedTaskServer
+
+        def _dispatch(encrypted_request, from_node):
+            # handle_forwarded_request is async; run it to completion in this
+            # worker thread (handlers are dispatched off the event loop).
+            return asyncio.run(self.handle_forwarded_request(encrypted_request, from_node))
+
+        server = DistributedTaskServer(config or self.config, dispatch=None)
+        server.register(
+            "federated_forward",
+            {"encrypted_request": {"type": "object"}, "from_node": {"type": "string"}},
+            _dispatch,
+            description="Receive a forwarded, token-authenticated request from a peer",
+        )
+        return server
+
     def add_peer(self, node_id: str, endpoint: str):
         """Add a peer node to the federation"""
         self.peers[node_id] = endpoint
@@ -416,9 +448,20 @@ class FederatedSCPNode:
         encrypted_request = self.auth_manager.encrypt_with_session_key(request_payload, session_key)
         
         self.logger.info(f"Forwarding request to {target_node} with client token auth")
-        
-        # For prototype, return simulated response
-        # In real implementation, this would make actual network call
+
+        # Real transport when enabled and the peer endpoint is known; otherwise
+        # fall back to the in-process DEMO_FEDERATION_NODES simulation.
+        if self.peer_pool is not None and target_node in self.peers:
+            from urllib.parse import urlparse
+            parsed = urlparse(self.peers[target_node])
+            host = parsed.hostname or "localhost"
+            port = parsed.port
+            return await self.peer_pool.call(
+                target_node, host, port,
+                "federated_forward",
+                encrypted_request=encrypted_request, from_node=self.node_id,
+            )
+
         return await self._simulate_forwarded_request(encrypted_request, target_node)
     
     async def handle_forwarded_request(self, encrypted_request: Dict[str, Any], from_node: str) -> Dict[str, Any]:
@@ -568,6 +611,44 @@ def create_test_jwt(user: str, permissions: List[str], forwarding_allowed: List[
     }
 
     return jwt.encode(payload, secret, algorithm='HS256')
+
+
+def mint_client_jwt(user: str, permissions: List[str],
+                    forwarding_allowed: List[str] = None,
+                    private_key_path: str = None, private_key_pem: bytes = None,
+                    ttl_seconds: int = 3600) -> str:
+    """Mint a real RS256 federation client token from an issuer's private key.
+
+    This is the production issuer counterpart to ``create_test_jwt`` (HS256,
+    test-only). Only the holder of the RSA private key can mint; every node
+    verifies with the corresponding public key (``jwt_public_key_path`` +
+    ``jwt_algorithm="RS256"``) and *cannot forge* tokens. The token carries the
+    federation issuer/audience binding so it validates against
+    ``FederatedAuthManager.validate_client_jwt``.
+
+    Provide the signing key as ``private_key_path`` (PEM file) or
+    ``private_key_pem`` (PEM bytes/str).
+    """
+    if forwarding_allowed is None:
+        forwarding_allowed = ["*"]
+
+    if private_key_pem is None:
+        if not private_key_path:
+            raise ValueError("mint_client_jwt requires private_key_path or private_key_pem")
+        with open(private_key_path, "rb") as f:
+            private_key_pem = f.read()
+
+    now = time.time()
+    payload = {
+        'user': user,
+        'permissions': permissions,
+        'forwarding_allowed': forwarding_allowed,
+        'iss': FEDERATION_ISSUER,
+        'aud': FEDERATION_AUDIENCE,
+        'iat': now,
+        'exp': now + ttl_seconds,
+    }
+    return jwt.encode(payload, private_key_pem, algorithm='RS256')
 
 
 # Global federation registry for demo

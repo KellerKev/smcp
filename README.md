@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="SMCP — Secure Model Context Protocol" width="440">
+</p>
+
 # SMCP — Secure Model Context Protocol
 
 > **[MCP](https://modelcontextprotocol.io/) with authentication, per-message encryption, and
@@ -36,23 +40,26 @@ as-is and wraps it in a security + coordination layer**, so the same tools work 
 Pick the posture that fits — from a simple API key for local testing up to per-message encryption
 with an audit trail (see [Security modes](#-security-modes) below).
 
-> **Status, honestly:** SMCP's *core* — auth (API-key / JWT / RS256), per-message encryption,
+> **Status:** SMCP's *core* — auth (API-key / JWT / RS256), per-message encryption,
 > replay protection, per-tool authorization, TLS enforcement, fail-closed config, the connectors,
 > and external-IdP OAuth2 — is security-hardened and covered by an automated test suite (`pixi run
-> test`, 106 tests). The DuckDB connector fails closed at the engine level (host filesystem/network
+> test`, 118 tests). The DuckDB connector fails closed at the engine level (host filesystem/network
 > access is off unless opted in, and raw SQL is screened for file/network/extension access); the
 > filesystem connector enforces its extension allowlist symmetrically on read/delete/list; and
 > `SMCPConfig.load()` preserves every setting (TLS, JWT algorithm, and the full OAuth2/crypto/cluster
-> blocks) rather than silently dropping them. Federated client tokens are audience/issuer-bound and
-> support RS256 verify-only mode so one node cannot forge another's identity. What is still
-> **demo-grade**: the distributed / agent-to-agent layer runs today as a localhost *simulation*
-> rather than real multi-node networking, the federated trust model defaults to a shared HS256 secret
-> (RS256 recommended for multi-party), and the integrations (CrewAI, MindsDB) and the OAuth2 flow are
-> exercised against local/mock services, not a production identity provider. There has been no
-> external security audit and it isn't yet running in production. Treat the security core as reusable;
-> treat the distributed/A2A and integration pieces as working demonstrations. The same core is used in
-> the [RIXI](https://github.com/KellerKev/rixi) agent (`agent/smcp.py`) to share tools securely
-> between agents over an untrusted link.
+> blocks) rather than silently dropping them. The distributed / agent-to-agent layer talks between
+> nodes over the authenticated SMCP WebSocket RPC (a 2-node socket round-trip is exercised by the
+> test suite). Federated auth supports an RS256 issuer — one node mints tokens with a private key,
+> peers verify with the public key and cannot forge — with audience/issuer-bound tokens and
+> target-bound forwarding proofs.
+>
+> Still deferred: pluggable discovery (Consul/etcd/DNS — static config-driven discovery only),
+> forward-secret ECDH session keys (shared-secret HKDF today), and per-node asymmetric forwarding
+> proofs. The integrations (CrewAI, MindsDB) and the OAuth2 flow are exercised against local/mock
+> services, not a production identity provider; there has been no external security audit and it
+> isn't yet running in production. The same core is used in the
+> [RIXI](https://github.com/KellerKev/rixi) agent (`agent/smcp.py`) to share tools securely between
+> agents over an untrusted link.
 
 ## 📚 Documentation
 
@@ -88,6 +95,25 @@ start if validation fails.
 By default JWTs are signed with a shared secret (HS256) — fine within a single trust domain. For
 multi-party deployments, set `jwt_algorithm="RS256"` with a server-held private key and a client
 public key: the server mints tokens, clients verify them, and a client **cannot forge its own**.
+
+**Federations should use RS256.** With a shared HS256 secret, any node that holds it can mint a token
+for any identity. Under RS256, one **issuer** node holds the private key and mints client tokens
+(`smcp_federated_auth.mint_client_jwt`); every other node holds only the public key and *verifies* —
+a compromised verifier cannot forge identities. Generate a keypair with:
+
+```bash
+pixi run python tools/generate_jwt_keys.py generate -o ./jwt_keys
+```
+
+```toml
+[security]
+jwt_algorithm = "RS256"
+jwt_private_key_path = "./jwt_keys/jwt_private.pem"   # issuer only
+jwt_public_key_path  = "./jwt_keys/jwt_public.pem"    # every node
+```
+
+Tokens are bound to the federation issuer/audience, forwarding proofs are bound to their target node,
+and cross-node calls run over the authenticated SMCP WebSocket RPC.
 
 ### 🏢 External-IdP OAuth2 (enterprise mode)
 
@@ -351,16 +377,21 @@ This project is licensed under the MIT License.
 
 ## 🚦 Status
 
-- ✅ **Core SMCP**: security-hardened and test-covered (106 tests)
+- ✅ **Core SMCP**: security-hardened and test-covered (118 tests)
 - ✅ **Basic/Encrypted modes**: security-hardened, test-covered
-- 🚧 **A2A System**: working prototype (localhost simulation) with per-tool authorization
+- ✅ **A2A / distributed system**: real multi-node networking over the authenticated SMCP
+  WebSocket RPC (handshake → auth → tool-invoke), with a 2-node socket test. Consul/etcd/DNS
+  discovery is not implemented (static config-driven discovery only); forward-secret ECDH session
+  keys are still deferred (shared-secret HKDF today)
 - ✅ **DuckDB / Filesystem connectors**: hardened, fail-closed by default, test-covered
 - ✅ **CrewAI Integration**: working demo (in the `integrations` env)
 - ✅ **MindsDB integration**: working demo (requires a MindsDB container)
 - ✅ **Enterprise / OAuth2 mode**: external-IdP token validation, hardened and test-covered
   (JWKS + static-key), verified against a mock OIDC provider
-- 🚧 **Federated auth**: audience/issuer-bound tokens with RS256 verify-only support and a
-  test suite; defaults to a shared HS256 secret (use RS256 for multi-party trust)
+- ✅ **Federated auth**: RS256 issuer/verify (an issuer mints with a private key, peers verify with
+  the public key and cannot forge), audience/issuer-bound tokens, target-bound forwarding proofs,
+  test-covered. HS256 shared-secret remains available for a single trust domain. Per-node
+  asymmetric forwarding proofs are the remaining deferred item
 
 ---
 

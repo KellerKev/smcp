@@ -17,6 +17,7 @@ from smcp_config import SMCPConfig
 from smcp_federated_auth import (
     FederatedAuthManager,
     create_test_jwt,
+    mint_client_jwt,
     FEDERATION_ISSUER,
     FEDERATION_AUDIENCE,
 )
@@ -147,3 +148,57 @@ def test_rs256_requires_public_key():
     cfg.security.jwt_public_key_path = None
     with pytest.raises(ValueError):
         FederatedAuthManager(cfg, "node_a")
+
+
+# --------------------------------------------------------------------------- #
+# RS256 real issuer: mint with private key, verify with public key
+# --------------------------------------------------------------------------- #
+def _rsa_keypair(tmp_path):
+    from tools.generate_jwt_keys import generate_rsa_keypair
+    priv, pub = generate_rsa_keypair(2048)
+    priv_path = tmp_path / "priv.pem"
+    pub_path = tmp_path / "pub.pem"
+    priv_path.write_bytes(priv)
+    pub_path.write_bytes(pub)
+    return priv_path, pub_path
+
+
+def _rs256_config(pub_path):
+    cfg = _config()
+    cfg.security.jwt_algorithm = "RS256"
+    cfg.security.jwt_public_key_path = str(pub_path)
+    return cfg
+
+
+def test_rs256_minted_token_verifies(tmp_path):
+    priv_path, pub_path = _rsa_keypair(tmp_path)
+    mgr = FederatedAuthManager(_rs256_config(pub_path), "verifier")
+    token = mint_client_jwt("alice@corp", ["task:*"], private_key_path=str(priv_path))
+    payload = mgr.validate_client_jwt(token)
+    assert payload["user"] == "alice@corp"
+
+
+def test_rs256_rejects_hs256_forgery(tmp_path):
+    # Under RS256 pinning, an HS256-signed token (the shared-secret forgery a
+    # compromised node might attempt) must be rejected.
+    priv_path, pub_path = _rsa_keypair(tmp_path)
+    mgr = FederatedAuthManager(_rs256_config(pub_path), "verifier")
+    forged = jwt.encode(
+        {"user": "eve", "permissions": ["task:*"], "iss": FEDERATION_ISSUER,
+         "aud": FEDERATION_AUDIENCE, "iat": time.time(), "exp": time.time() + 60},
+        "guessed-secret-that-is-long-enough-to-avoid-warnings", algorithm="HS256")
+    with pytest.raises(jwt.InvalidTokenError):
+        mgr.validate_client_jwt(forged)
+
+
+def test_rs256_verifier_cannot_mint(tmp_path):
+    # A verify-only node holds only the public key; minting requires the private
+    # key, so mint_client_jwt with the public key must fail.
+    _priv_path, pub_path = _rsa_keypair(tmp_path)
+    with pytest.raises(Exception):
+        mint_client_jwt("mallory", ["task:*"], private_key_path=str(pub_path))
+
+
+def test_mint_requires_a_key():
+    with pytest.raises(ValueError):
+        mint_client_jwt("bob", ["task:*"])

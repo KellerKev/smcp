@@ -17,23 +17,61 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 
 @click.command()
-@click.option('--mode', '-m', 
-              type=click.Choice(['basic', 'encrypted', 'both']),
+@click.option('--mode', '-m',
+              type=click.Choice(['basic', 'encrypted', 'federated', 'both']),
               default='both',
-              help='Security mode to setup (default: both)')
+              help='Security mode to setup (default: both). "federated" provisions RS256 JWT keys.')
 @click.option('--force', '-f', is_flag=True,
               help='Overwrite existing configuration')
 def setup_dev_security(mode: str, force: bool):
     """Setup development security configuration"""
-    
+
     print("🔧 SCP Framework - Development Security Setup")
     print("=" * 60)
     print(f"Setup mode: {mode}")
     print()
-    
+
     current_dir = Path.cwd()
     tools_dir = Path(__file__).parent
-    
+
+    # Step 0: RS256 JWT keys for federated multi-party trust.
+    if mode == 'federated':
+        print("0. Setting up RS256 JWT keys for federated mode...")
+        jwt_keys_dir = current_dir / "jwt_keys"
+        if jwt_keys_dir.exists() and not force:
+            print(f"   ✓ JWT keys already exist: {jwt_keys_dir}")
+        else:
+            cmd = [sys.executable, str(tools_dir / "generate_jwt_keys.py"), "generate",
+                   "-o", str(jwt_keys_dir)]
+            if force:
+                cmd.append("--force")
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    print("   ✓ RS256 JWT keypair generated (issuer private + verifier public)")
+                else:
+                    print(f"   ❌ JWT key generation failed: {result.stderr}")
+                    return
+            except Exception as e:
+                print(f"   ❌ Error generating JWT keys: {e}")
+                return
+
+        config_dir = current_dir / "dev_config_examples"
+        config_dir.mkdir(exist_ok=True)
+        fed_config = config_dir / "federated_rs256.toml"
+        with open(fed_config, 'w') as f:
+            f.write(
+                '# Federated (multi-party) mode - RS256 issuer/verify\n'
+                '# The issuer node sets jwt_private_key_path; every node sets jwt_public_key_path.\n'
+                '[security]\n'
+                'jwt_algorithm = "RS256"\n'
+                'jwt_private_key_path = "./jwt_keys/jwt_private.pem"   # issuer only\n'
+                'jwt_public_key_path  = "./jwt_keys/jwt_public.pem"    # every node\n'
+            )
+        print(f"   ✓ Wrote {fed_config}")
+        print("\n✅ Federated RS256 setup complete.")
+        return
+
     # Step 1: Generate ECDH keys if needed
     if mode in ['encrypted', 'both']:
         print("1. Setting up ECDH keys for encrypted mode...")
