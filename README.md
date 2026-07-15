@@ -36,8 +36,15 @@ as-is and wraps it in a security + coordination layer**, so the same tools work 
 Pick the posture that fits — from a simple API key for local testing up to per-message encryption
 with an audit trail (see [Security modes](#-security-modes) below).
 
-> SMCP is a working proof-of-concept: the demos below run end to end. It explores how MCP can be
-> hardened for networked, multi-agent use — the same ideas are used in the
+> **Status, honestly:** SMCP's *core* — auth (API-key / JWT / RS256), per-message encryption,
+> replay protection, per-tool authorization, TLS enforcement, fail-closed config, the connectors,
+> and external-IdP OAuth2 — is security-hardened and covered by an automated test suite (`pixi run
+> test`). What is still **demo-grade**: the distributed /
+> agent-to-agent layer runs today as a localhost *simulation* rather than real multi-node
+> networking, and the integrations (CrewAI, MindsDB) and the OAuth2 flow are exercised against
+> local/mock services, not a production identity provider. There has been no external security
+> audit and it isn't yet running in production. Treat the security core as reusable; treat the
+> distributed/A2A and integration pieces as working demonstrations. The same core is used in the
 > [RIXI](https://github.com/KellerKev/rixi) agent (`agent/smcp.py`) to share tools securely between
 > agents over an untrusted link.
 
@@ -335,9 +342,9 @@ This project is licensed under the MIT License.
 
 ## 🚦 Status
 
-- ✅ **Core SMCP**: proof-of-concept, security-hardened, test-covered
-- ✅ **Basic/Encrypted modes**: functional demonstrations
-- ✅ **A2A System**: working prototype with per-tool authorization
+- ✅ **Core SMCP**: security-hardened and test-covered
+- ✅ **Basic/Encrypted modes**: security-hardened, test-covered
+- 🚧 **A2A System**: working prototype (localhost simulation) with per-tool authorization
 - ✅ **DuckDB / Filesystem connectors**: hardened example implementations
 - ✅ **CrewAI Integration**: working demo (in the `integrations` env)
 - ✅ **MindsDB integration**: working demo (requires a MindsDB container)

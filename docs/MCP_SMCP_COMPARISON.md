@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-SMCP (Secure Model Context Protocol) is a proof-of-concept that demonstrates how MCP (Model Context Protocol) can be extended with security features and multi-agent coordination while maintaining backward compatibility. This document provides a comprehensive comparison between standard MCP and SMCP.
+SMCP (Secure Model Context Protocol) is a security-hardened extension of MCP (Model Context Protocol) that adds authentication, per-message encryption, and multi-agent coordination while maintaining backward compatibility. This document provides a comprehensive comparison between standard MCP and SMCP.
 
 ## Quick Comparison Table
 
@@ -14,7 +14,7 @@ SMCP (Secure Model Context Protocol) is a proof-of-concept that demonstrates how
 | **Authentication** | Not included | JWT, OAuth2, API keys |
 | **Multi-Agent** | Not supported | Full A2A coordination |
 | **Backward Compatible** | N/A | 100% MCP compatible |
-| **Production Ready** | Yes | Proof-of-concept |
+| **Production Ready** | Yes | Core hardened & test-covered; A2A layer still demo-grade |
 | **Use Case** | Development, simple integrations | Security-sensitive, multi-agent scenarios |
 
 ## Detailed Feature Comparison
@@ -260,7 +260,7 @@ Features:
    - Simple request-response
 
 3. Prototype AI application
-   - Proof of concept
+   - Early experiment
    - Not production-ready
    - Focus on functionality
 ```

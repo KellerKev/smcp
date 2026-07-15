@@ -104,7 +104,7 @@ ALL examples are now working! The "hanging" demos actually work - they just take
 
 3. **Known Limitations:**
    - Some A2A demos may timeout with certain Ollama models
-   - Enterprise OAuth2 is mock implementation (proof-of-concept)
+   - Enterprise OAuth2 validates external-IdP tokens (JWKS or pinned static key); tested against a mock OIDC provider
 
 ## Conclusion
 
