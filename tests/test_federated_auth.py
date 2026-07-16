@@ -178,6 +178,63 @@ def test_rs256_minted_token_verifies(tmp_path):
     assert payload["user"] == "alice@corp"
 
 
+def test_federation_rs256_via_dedicated_fields(tmp_path):
+    # RS256 federation verification via federation_jwt_* fields, which do NOT
+    # touch the transport JWT — so the transport can still mint session tokens.
+    priv_path, pub_path = _rsa_keypair(tmp_path)
+    cfg = _config()
+    cfg.security.federation_jwt_algorithm = "RS256"
+    cfg.security.federation_jwt_public_key_path = str(pub_path)
+    # Transport JWT stays the default HS256 (mints session tokens fine).
+    assert cfg.security.jwt_algorithm == "HS256"
+    mgr = FederatedAuthManager(cfg, "verifier")
+    token = mint_client_jwt("bob@corp", ["task:*"], private_key_path=str(priv_path))
+    assert mgr.validate_client_jwt(token)["user"] == "bob@corp"
+
+
+def test_rs256_federation_token_with_hs256_transport_end_to_end(tmp_path):
+    # The previously-broken combination: RS256-issued client tokens verified by
+    # peers, while the transport server mints its own HS256 session tokens.
+    from smcp_federated_auth import FederatedSCPNode
+    import secrets as _secrets
+
+    issuer_priv, issuer_pub = _rsa_keypair(tmp_path)  # federation issuer key
+    a_priv, a_pub = _proof_keypair(tmp_path, "nodeA")
+    b_priv, b_pub = _proof_keypair(tmp_path, "nodeB")
+    api = "cfg_" + _secrets.token_urlsafe(24)
+    shared = dict(api_key=api, jwt_secret=SECRET,
+                  secret_key=_secrets.token_urlsafe(32),
+                  kdf_salt=_secrets.token_urlsafe(16))
+
+    def cfg(proof_key):
+        c = SMCPConfig(node_id="n", **shared)
+        c.security.allow_insecure_transit = True
+        c.security.federation_jwt_algorithm = "RS256"           # verify client tokens
+        c.security.federation_jwt_public_key_path = str(issuer_pub)
+        c.security.proof_signing_key_path = str(proof_key)
+        # transport jwt_algorithm stays HS256 -> session tokens mint fine
+        return c
+
+    async def main():
+        A = FederatedSCPNode(cfg(a_priv), "nodeA")
+        B = FederatedSCPNode(cfg(b_priv), "nodeB")
+        serverB = B.make_forward_server(cfg(b_priv))
+        await serverB.start(host="localhost", port=8843)
+        A.enable_real_transport(cfg(a_priv))
+        A.add_peer("nodeB", "ws://localhost:8843", proof_public_key_path=str(b_pub))
+        B.add_peer("nodeA", "ws://localhost:8844", proof_public_key_path=str(a_pub))
+        token = mint_client_jwt("alice@corp", ["task:*"], ["node*"],
+                                private_key_path=str(issuer_priv))
+        try:
+            r = await A.forward_request({"task_id": "t", "type": "ai_reasoning"}, "nodeB", token)
+            assert r["status"] == "success", r
+        finally:
+            await serverB.stop()
+            await A.peer_pool.close_all()
+
+    asyncio.run(main())
+
+
 def test_rs256_rejects_hs256_forgery(tmp_path):
     # Under RS256 pinning, an HS256-signed token (the shared-secret forgery a
     # compromised node might attempt) must be rejected.

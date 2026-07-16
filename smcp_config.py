@@ -129,6 +129,15 @@ class SecurityConfig:
     jwt_algorithm: str = "HS256"
     jwt_private_key_path: Optional[str] = None  # server: sign
     jwt_public_key_path: Optional[str] = None   # client/server: verify
+    # Federation client-token verification — SEPARATE from the transport JWT
+    # above. A federated node verifies forwarded *client* tokens against the
+    # issuer's public key, but its transport server still mints its own *session*
+    # tokens (server-internal). Keeping these distinct means a verify-only
+    # federated node can run an HS256 transport (which mints session tokens) while
+    # verifying RS256 client tokens. When unset, the federation verifier falls
+    # back to jwt_algorithm / jwt_public_key_path for backward compatibility.
+    federation_jwt_algorithm: Optional[str] = None
+    federation_jwt_public_key_path: Optional[str] = None
     # Per-node forwarding-proof signing (federated A2A). When set, this node
     # signs forwarding proofs with its OWN private key (RSA-PSS) and peers verify
     # against its registered public key — so no shared secret can forge a proof.

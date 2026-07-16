@@ -68,19 +68,27 @@ class FederatedAuthManager:
         self.jwt_secret = config.jwt_secret
         self.logger = logging.getLogger(f'federated_auth_{node_id}')
 
-        # JWT verification posture. With HS256 (default) every node shares one
-        # secret, so any node — or anyone who reads it — can mint tokens for any
-        # identity: a demo-grade trust model. Configure jwt_algorithm="RS256"
-        # with a public key so nodes can *verify* client tokens but cannot
-        # *forge* them; only the private-key holder (the client authority) mints.
-        self.jwt_algorithm = getattr(config.security, "jwt_algorithm", "HS256")
+        # Federation client-token verification posture. This is SEPARATE from the
+        # transport JWT: it only chooses how *forwarded client tokens* are
+        # verified, and never mints anything, so it doesn't affect the transport
+        # server's ability to mint its own session tokens. Prefer the dedicated
+        # federation_jwt_* settings; fall back to the transport jwt_* fields for
+        # backward compatibility. With HS256 (default) every node shares one
+        # secret; RS256 with the issuer's public key lets nodes *verify* client
+        # tokens but not *forge* them.
+        sec = config.security
+        self.jwt_algorithm = (getattr(sec, "federation_jwt_algorithm", None)
+                              or getattr(sec, "jwt_algorithm", "HS256"))
         self._jwt_verify_key = None
         if self.jwt_algorithm == "RS256":
-            key_path = getattr(config.security, "jwt_public_key_path", None)
+            key_path = (getattr(sec, "federation_jwt_public_key_path", None)
+                        or getattr(sec, "jwt_public_key_path", None))
             if not key_path:
                 raise ValueError(
-                    "jwt_algorithm=RS256 requires security.jwt_public_key_path "
-                    "so nodes can verify (but not forge) client tokens."
+                    "RS256 federation verification requires "
+                    "security.federation_jwt_public_key_path (or the legacy "
+                    "security.jwt_public_key_path) so nodes can verify (but not "
+                    "forge) client tokens."
                 )
             with open(key_path, "rb") as f:
                 self._jwt_verify_key = f.read()
@@ -620,6 +628,13 @@ class FederatedSCPNode:
         """Handle a request forwarded from another node"""
         
         try:
+            # Ensure a session key exists for the sender. With forward secrecy the
+            # key was already established by the ECDH exchange; without it, derive
+            # the deterministic shared-secret key on demand (both sides compute the
+            # same key, so no exchange is needed).
+            if from_node not in self.auth_manager.session_keys:
+                await self.auth_manager.negotiate_session_key(from_node, "")
+
             # Decrypt the request
             request_payload = self.auth_manager.decrypt_with_session_key(encrypted_request, from_node)
             

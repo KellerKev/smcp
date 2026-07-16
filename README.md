@@ -100,12 +100,21 @@ a compromised verifier cannot forge identities. Generate a keypair with:
 pixi run python tools/generate_jwt_keys.py generate -o ./jwt_keys
 ```
 
+Configure the **federation** verification with its own settings — these are separate from the
+transport JWT, so a verify-only node still runs an HS256 transport that mints its own session tokens:
+
 ```toml
 [security]
-jwt_algorithm = "RS256"
-jwt_private_key_path = "./jwt_keys/jwt_private.pem"   # issuer only
-jwt_public_key_path  = "./jwt_keys/jwt_public.pem"    # every node
+# Federation client-token verification (every node): verify RS256-issued client tokens
+federation_jwt_algorithm = "RS256"
+federation_jwt_public_key_path = "./jwt_keys/jwt_public.pem"
+# The transport JWT (jwt_algorithm) stays HS256 by default and mints session tokens.
 ```
+
+The issuer node signs client tokens with `./jwt_keys/jwt_private.pem` via `mint_client_jwt` — it does
+not need to expose that key through the transport config. (Setting the transport's own
+`jwt_algorithm = "RS256"` is a separate choice and requires `jwt_private_key_path` on any node that
+runs a server, since the server mints session tokens.)
 
 Tokens are bound to the federation issuer/audience, forwarding proofs are bound to their target node,
 and cross-node calls run over the authenticated SMCP WebSocket RPC.
