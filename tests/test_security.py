@@ -118,6 +118,103 @@ def test_replay_is_rejected():
     assert replay.type == MessageType.ERROR
 
 
+# --------------------------------------------------------------------------- #
+# P1b: least-privilege per-tool scopes via permission_policy
+# --------------------------------------------------------------------------- #
+def test_default_grant_is_broad_backcompat():
+    server, _client, _api = make_pair()
+    assert server._grant_permissions("c1") == ["tool_invoke", "discovery"]
+
+
+def test_permission_policy_scopes_a_client():
+    server, _client, _api = make_pair()
+    server.permission_policy = {"c1": ["tool:calculator", "discovery"]}
+    assert server._grant_permissions("c1") == ["tool:calculator", "discovery"]
+    # Unknown client falls back to the broad default.
+    assert server._grant_permissions("other") == ["tool_invoke", "discovery"]
+
+
+def test_scoped_token_authorizes_only_its_tool():
+    server, _client, _api = make_pair()
+    # A client scoped to tool:calculator can invoke calculator but not other tools.
+    tok = server.security.generate_jwt("c1", ["tool:calculator", "discovery"])
+    assert server._is_authorized(tok, "tool:calculator")
+    assert not server._is_authorized(tok, "tool:secret_tool")
+    assert not server._is_authorized(tok, "tool_invoke")
+
+
+# --------------------------------------------------------------------------- #
+# P4a: capability shadowing — no silent overwrite
+# --------------------------------------------------------------------------- #
+def test_register_capability_refuses_shadowing():
+    server, _client, _api = make_pair()
+    cap = Capability(name="dup_tool", description="", parameters={})
+    server.register_capability(cap, lambda: {"v": 1})
+    with pytest.raises(ValueError):
+        server.register_capability(cap, lambda: {"v": 2})  # shadow attempt
+    # Intentional override is allowed.
+    server.register_capability(cap, lambda: {"v": 3}, override=True)
+    assert server.tool_handlers["dup_tool"]() == {"v": 3}
+
+
+# --------------------------------------------------------------------------- #
+# P4b/P4c: consent hook, output filter, audit emitter
+# --------------------------------------------------------------------------- #
+def _auth_and_token(server, client, api):
+    m = client.create_message(MessageType.AUTH, {"api_key": api, "client_id": "c1"})
+    resp = server.process_message(m)
+    return _decrypt(server, resp)["token"]
+
+
+def test_consent_hook_denies_invocation():
+    server, client, api = make_pair()
+    server.register_capability(Capability("greet", "", {"name": {"type": "string"}}),
+                               lambda name: {"hi": name})
+    tok = _auth_and_token(server, client, api)
+    server.consent_hook = lambda tool, params, cid: tool != "greet"  # deny greet
+    m = client.create_message(MessageType.TOOL_INVOKE,
+                              {"token": tok, "tool_name": "greet", "parameters": {"name": "x"}})
+    assert server.process_message(m).type == MessageType.ERROR
+
+
+def test_output_filter_transforms_result():
+    server, client, api = make_pair()
+    server.register_capability(Capability("greet", "", {"name": {"type": "string"}}),
+                               lambda name: {"hi": name})
+    tok = _auth_and_token(server, client, api)
+    server.output_filter = lambda tool, res: {**res, "filtered": True}
+    m = client.create_message(MessageType.TOOL_INVOKE,
+                              {"token": tok, "tool_name": "greet", "parameters": {"name": "x"}})
+    out = _decrypt(server, server.process_message(m))
+    assert out["result"] == {"hi": "x", "filtered": True}
+
+
+def test_protocol_version_negotiation():
+    from smcp_core import PROTOCOL_VERSION
+    server, client, _api = make_pair()
+    ok = client.create_message(MessageType.HANDSHAKE,
+                               {"protocol_version": PROTOCOL_VERSION, "nonce": "n"}, encrypt=False)
+    assert server.process_message(ok).type == MessageType.HANDSHAKE
+    bad = client.create_message(MessageType.HANDSHAKE,
+                                {"protocol_version": "4.0", "nonce": "n"}, encrypt=False)
+    assert server.process_message(bad).type == MessageType.ERROR
+
+
+def test_audit_hook_emits_events():
+    server, client, api = make_pair()
+    server.register_capability(Capability("greet", "", {"name": {"type": "string"}}),
+                               lambda name: {"hi": name})
+    events = []
+    server.audit_hook = events.append
+    tok = _auth_and_token(server, client, api)
+    m = client.create_message(MessageType.TOOL_INVOKE,
+                              {"token": tok, "tool_name": "greet", "parameters": {"name": "x"}})
+    server.process_message(m)
+    kinds = [e["event"] for e in events]
+    assert "auth" in kinds and "invoke" in kinds
+    assert all("ts" in e and "node_id" in e for e in events)
+
+
 def test_stale_message_is_rejected():
     server, client, api = make_pair()
     msg = client.create_message(MessageType.AUTH, {"api_key": api})

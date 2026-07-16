@@ -11,6 +11,7 @@ import time
 import hashlib
 import hmac
 import logging
+import threading
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
@@ -104,6 +105,10 @@ class FederatedAuthManager:
         # Session key management
         self.session_keys: Dict[str, SessionKey] = {}  # peer_node_id -> SessionKey
         self.forwarding_nonces: Dict[str, float] = {}  # nonce -> timestamp (for replay prevention)
+        # Replay-cache concurrency + growth bounds (handlers run in a thread pool).
+        self._nonce_lock = threading.Lock()
+        self._max_nonces = 100_000
+        self._max_session_keys = 10_000
 
         # Trust relationships
         self.trusted_forwarders: Dict[str, bool] = {}  # node_id -> trusted
@@ -124,6 +129,15 @@ class FederatedAuthManager:
 
         # Initialize cryptographic components
         self._init_crypto()
+
+    def _store_session_key(self, peer_node_id: str, session_key: 'SessionKey'):
+        """Store a session key, evicting the oldest when over the cap so a flood
+        of distinct peer ids can't grow the table without bound."""
+        self.session_keys[peer_node_id] = session_key
+        if len(self.session_keys) > self._max_session_keys:
+            oldest = sorted(self.session_keys, key=lambda k: self.session_keys[k].created_at)
+            for k in oldest[:len(self.session_keys) - self._max_session_keys]:
+                del self.session_keys[k]
 
     def register_peer_public_key(self, node_id: str, public_key_path: str = None,
                                  public_key_pem: bytes = None):
@@ -262,10 +276,31 @@ class FederatedAuthManager:
             provided_signature = signed_proof['signature']
             sig_alg = signed_proof.get('sig_alg', 'HS256')
             message = self._proof_message(proof_data)
+            signer = proof_data.get('forwarded_by')
+
+            # Strict asymmetric mode: a node configured with its own proof key
+            # rejects ALL shared-secret (HMAC) proofs — once the federation is on
+            # per-node keys, the forgeable HMAC path must not remain selectable.
+            if self.proof_private_key is not None and sig_alg != 'PS256':
+                self.logger.warning(
+                    "Rejecting non-PS256 proof: this node runs per-node asymmetric "
+                    "proofs and does not accept shared-secret (HMAC) proofs."
+                )
+                return False, None
+
+            # Algorithm pinning: if the claimed signer has a registered public key,
+            # its proofs MUST be PS256. Otherwise an insider holding the shared
+            # jwt_secret could forge a proof by setting sig_alg='HS256' and HMAC-
+            # signing it — downgrading past the per-node asymmetric guarantee.
+            if signer in self.peer_public_keys and sig_alg != 'PS256':
+                self.logger.warning(
+                    f"Rejecting non-PS256 proof for signer {signer!r} with a "
+                    f"registered public key (downgrade attempt)"
+                )
+                return False, None
 
             if sig_alg == 'PS256':
                 # Asymmetric: verify against the signer's registered public key.
-                signer = proof_data.get('forwarded_by')
                 pub = self.peer_public_keys.get(signer)
                 if pub is None:
                     self.logger.warning(f"No registered proof public key for signer {signer!r}")
@@ -291,11 +326,13 @@ class FederatedAuthManager:
                     return False, None
 
             # Verify the proof was intended for THIS node — a proof captured on
-            # the wire cannot be replayed against a different target.
+            # the wire cannot be replayed against a different target. Require a
+            # non-empty target: an empty forwarded_to must not opt out of binding
+            # (which would let one proof be accepted at every node until expiry).
             intended_target = proof_data.get('forwarded_to', '')
-            if intended_target and intended_target != self.node_id:
+            if not intended_target or intended_target != self.node_id:
                 self.logger.warning(
-                    f"Forwarding proof target mismatch: intended {intended_target}, "
+                    f"Forwarding proof target mismatch: intended {intended_target!r}, "
                     f"received at {self.node_id}"
                 )
                 return False, None
@@ -305,20 +342,25 @@ class FederatedAuthManager:
                 self.logger.warning("Forwarding proof expired")
                 return False, None
             
-            # Check for replay attack
+            # Replay check + record, done atomically under a lock. Handlers run in
+            # a thread pool (and via asyncio.run in worker threads), so a naive
+            # check-then-store races: two concurrent submissions of the same proof
+            # could both pass the membership test. The lock closes that TOCTOU.
             nonce = proof_data['nonce']
-            if nonce in self.forwarding_nonces:
-                self.logger.warning("Forwarding proof nonce already used (replay attack?)")
-                return False, None
-            
-            # Store nonce to prevent replay
-            self.forwarding_nonces[nonce] = time.time()
-            
-            # Clean up old nonces periodically
             current_time = time.time()
-            expired_nonces = [n for n, t in self.forwarding_nonces.items() if current_time - t > 600]
-            for n in expired_nonces:
-                del self.forwarding_nonces[n]
+            with self._nonce_lock:
+                if nonce in self.forwarding_nonces:
+                    self.logger.warning("Forwarding proof nonce already used (replay attack?)")
+                    return False, None
+                # Prune expired nonces, then bound total size (evict oldest) so a
+                # flood of unique nonces can't grow the cache without limit.
+                expired = [n for n, t in self.forwarding_nonces.items() if current_time - t > 600]
+                for n in expired:
+                    del self.forwarding_nonces[n]
+                if len(self.forwarding_nonces) >= self._max_nonces:
+                    for n in sorted(self.forwarding_nonces, key=self.forwarding_nonces.get)[:len(self.forwarding_nonces) - self._max_nonces + 1]:
+                        del self.forwarding_nonces[n]
+                self.forwarding_nonces[nonce] = current_time
             
             # Create ForwardingProof object
             proof = ForwardingProof(
@@ -374,7 +416,7 @@ class FederatedAuthManager:
             format=serialization.PublicFormat.UncompressedPoint)
         session_key = self._derive_ecdh_session(
             peer_node_id, ephemeral, bytes.fromhex(peer_pub_hex))
-        self.session_keys[peer_node_id] = session_key
+        self._store_session_key(peer_node_id, session_key)
         return my_pub_bytes.hex()
 
     async def initiate_ecdh(self, peer_node_id: str, exchange_fn) -> SessionKey:
@@ -389,7 +431,7 @@ class FederatedAuthManager:
         peer_pub_hex = await exchange_fn(my_pub_bytes.hex())
         session_key = self._derive_ecdh_session(
             peer_node_id, ephemeral, bytes.fromhex(peer_pub_hex))
-        self.session_keys[peer_node_id] = session_key
+        self._store_session_key(peer_node_id, session_key)
         return session_key
 
     async def negotiate_session_key(self, peer_node_id: str, client_jwt: str,
@@ -430,7 +472,7 @@ class FederatedAuthManager:
             key=session_secret, node_a=node_a, node_b=node_b,
             created_at=time.time(), expires_at=time.time() + 900,
         )
-        self.session_keys[peer_node_id] = session_key
+        self._store_session_key(peer_node_id, session_key)
         self.logger.debug(f"Negotiated session key with {peer_node_id}")
         return session_key
     
@@ -445,17 +487,23 @@ class FederatedAuthManager:
 
         # Serialize data
         plaintext = json.dumps(data).encode()
-        
-        # Encrypt with AES-GCM
+
+        # Bind the session identity into the GCM tag as AAD, so ciphertext can't
+        # be lifted onto a different session (the session_id is authenticated, not
+        # just carried alongside).
+        session_id = f"{session_key.node_a}:{session_key.node_b}"
+        aad = session_id.encode()
+
         cipher = Cipher(algorithms.AES(session_key.key), modes.GCM(nonce))
         encryptor = cipher.encryptor()
+        encryptor.authenticate_additional_data(aad)
         ciphertext = encryptor.update(plaintext) + encryptor.finalize()
-        
+
         return {
             'encrypted_data': ciphertext.hex(),
             'nonce': nonce.hex(),
             'tag': encryptor.tag.hex(),
-            'session_id': f"{session_key.node_a}:{session_key.node_b}",
+            'session_id': session_id,
             'encrypted_at': time.time()
         }
     
@@ -473,12 +521,20 @@ class FederatedAuthManager:
         ciphertext = bytes.fromhex(encrypted_data['encrypted_data'])
         nonce = bytes.fromhex(encrypted_data['nonce'])
         tag = bytes.fromhex(encrypted_data['tag'])
-        
-        # Decrypt with AES-GCM
+
+        # Re-derive and verify the session-id AAD. The claimed session_id must
+        # match this session key's pair, so ciphertext bound to a different
+        # session fails authentication rather than decrypting.
+        expected_session_id = f"{session_key.node_a}:{session_key.node_b}"
+        claimed = encrypted_data.get('session_id', expected_session_id)
+        if claimed != expected_session_id:
+            raise ValueError("session_id mismatch")
+
         cipher = Cipher(algorithms.AES(session_key.key), modes.GCM(nonce, tag))
         decryptor = cipher.decryptor()
+        decryptor.authenticate_additional_data(expected_session_id.encode())
         plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-        
+
         return json.loads(plaintext.decode())
     
     def trust_forwarder(self, node_id: str):
@@ -628,11 +684,20 @@ class FederatedSCPNode:
         """Handle a request forwarded from another node"""
         
         try:
-            # Ensure a session key exists for the sender. With forward secrecy the
-            # key was already established by the ECDH exchange; without it, derive
-            # the deterministic shared-secret key on demand (both sides compute the
-            # same key, so no exchange is needed).
+            # Ensure a session key exists for the sender.
             if from_node not in self.auth_manager.session_keys:
+                if self.auth_manager._pfs_enabled():
+                    # Forward secrecy is required: the sender must have completed
+                    # the ECDH key exchange (federated_key_exchange) first. Refuse
+                    # to silently fall back to the deterministic long-term-secret
+                    # key, which would strip forward secrecy.
+                    raise ValueError(
+                        "No forward-secret session established; ECDH key exchange "
+                        "is required before forwarding when perfect_forward_secrecy "
+                        "is enabled."
+                    )
+                # PFS off: derive the deterministic shared-secret key on demand
+                # (both sides compute the same key, so no exchange is needed).
                 await self.auth_manager.negotiate_session_key(from_node, "")
 
             # Decrypt the request
@@ -644,10 +709,20 @@ class FederatedSCPNode:
             
             if not is_valid:
                 raise ValueError("Invalid forwarding proof")
-            
+
+            # The transport-level sender (from_node, which selected the session key)
+            # must match the signature-verified proof signer. Otherwise an insider
+            # could decouple transport identity from proof identity (arbitrary
+            # session-key derivation, muddied audit attribution).
+            if from_node != proof.forwarded_by:
+                raise ValueError(
+                    f"from_node {from_node!r} does not match proof.forwarded_by "
+                    f"{proof.forwarded_by!r}"
+                )
+
             # Validate the original client JWT
             client_payload = self.auth_manager.validate_client_jwt(proof.client_jwt)
-            
+
             # Check if forwarding node is trusted
             if not self.auth_manager.is_trusted_forwarder(proof.forwarded_by):
                 raise ValueError(f"Untrusted forwarder: {proof.forwarded_by}")

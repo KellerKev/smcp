@@ -429,10 +429,20 @@ class MCPBridge:
             # Map to SMCP capabilities
             smcp_capabilities = self.capability_mapper.discover_capabilities(config.capabilities)
 
-            # Update capability index
+            # Update capability index. Registration order is preserved and used
+            # by _select_server (first-registered wins), so a server registered
+            # later cannot shadow an earlier server's capability for routing; a
+            # collision is logged as a potential shadowing attempt.
             for capability in smcp_capabilities:
                 if capability not in self.capability_index:
                     self.capability_index[capability] = []
+                if self.capability_index[capability]:
+                    logger.warning(
+                        f"Capability {capability!r} already provided by "
+                        f"{self.capability_index[capability][0]!r}; {config.server_id!r} "
+                        f"also claims it (potential shadowing). Routing keeps the "
+                        f"first-registered provider."
+                    )
                 self.capability_index[capability].append(config.server_id)
 
             logger.info(f"Registered MCP server: {config.name} with capabilities: {smcp_capabilities}")

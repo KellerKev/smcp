@@ -45,6 +45,10 @@ class PeerConnectionPool:
     websocket isn't used from two coroutines at once.
     """
 
+    # A call/handshake that gets no response must not hold the per-node lock
+    # forever; bound every peer RPC so a silent peer can't wedge the pool.
+    _CALL_TIMEOUT = 30
+
     def __init__(self, base_config: SMCPConfig):
         self.base_config = base_config
         self._clients: Dict[str, SMCPClient] = {}
@@ -64,7 +68,15 @@ class PeerConnectionPool:
             return client
         cfg = self._peer_config(host, port)
         client = SMCPClient(cfg)
-        await client.connect()
+        try:
+            await asyncio.wait_for(client.connect(), timeout=self._CALL_TIMEOUT)
+        except Exception:
+            # Don't leak a half-open client if connect fails/times out.
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            raise
         self._clients[node_id] = client
         return client
 
@@ -74,14 +86,16 @@ class PeerConnectionPool:
         async with self._lock(node_id):
             try:
                 client = await self._get_client(node_id, host, port)
-                return await client.invoke_tool(tool_name, **params)
+                return await asyncio.wait_for(
+                    client.invoke_tool(tool_name, **params), timeout=self._CALL_TIMEOUT)
             except Exception as first_err:
                 logger.warning(
                     f"peer call to {node_id} failed ({first_err}); reconnecting"
                 )
                 await self._drop(node_id)
                 client = await self._get_client(node_id, host, port)
-                return await client.invoke_tool(tool_name, **params)
+                return await asyncio.wait_for(
+                    client.invoke_tool(tool_name, **params), timeout=self._CALL_TIMEOUT)
 
     async def health(self, node_id: str, host: str, port: int) -> bool:
         """Return True if the peer accepts an authenticated handshake."""

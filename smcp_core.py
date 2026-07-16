@@ -22,6 +22,15 @@ import jwt
 from datetime import datetime, timedelta, timezone
 
 
+# Wire protocol version. The MAJOR component must match between peers — a
+# different major means incompatible framing/crypto and the handshake is refused.
+PROTOCOL_VERSION = "3.0"
+
+
+def _protocol_major(version: str) -> str:
+    return str(version or "").split(".", 1)[0]
+
+
 class MessageType(Enum):
     HANDSHAKE = "handshake"
     AUTH = "auth"
@@ -231,13 +240,41 @@ class SMCPNode:
         self.capabilities: Dict[str, Capability] = {}
         self.tool_handlers: Dict[str, Callable] = {}
         self.auth_tokens: Dict[str, Dict[str, Any]] = {}
+        # Optional least-privilege authorization policy. A dict {client_id: [scopes]}
+        # or a callable (client_id) -> [scopes]. When set and it returns scopes for
+        # a client, those are granted instead of the broad default; scopes are
+        # `tool:<name>` (a specific tool) and/or `tool_invoke`/`discovery`. Left
+        # None, every authenticated client gets the broad default (back-compat).
+        self.permission_policy = None
+        # Optional pluggable safety/observability hooks (all default off, so no
+        # behaviour change unless configured):
+        #   consent_hook(tool_name, parameters, client_id) -> bool
+        #       return False to deny an invocation (human-in-the-loop / policy gate).
+        #   output_filter(tool_name, result) -> result
+        #       transform/redact/taint a tool result before it is returned.
+        #   audit_hook(event: dict) -> None
+        #       receive structured audit events (auth, invoke, denial, error).
+        self.consent_hook = None
+        self.output_filter = None
+        self.audit_hook = None
         # Replay protection: accept a message only once and only within a freshness
         # window. Maps message id -> timestamp; pruned as it grows.
         self.replay_window_seconds = 300
         self._seen_message_ids: Dict[str, float] = {}
         
-    def register_capability(self, capability: Capability, handler: Callable):
-        """Register a tool capability"""
+    def register_capability(self, capability: Capability, handler: Callable, override: bool = False):
+        """Register a tool capability.
+
+        Refuses to silently overwrite an existing capability of the same name
+        (tool shadowing): a later registration replacing a legitimate tool is a
+        classic MCP shadowing vector. Pass ``override=True`` to intentionally
+        replace one.
+        """
+        if capability.name in self.capabilities and not override:
+            raise ValueError(
+                f"Capability {capability.name!r} is already registered; refusing to "
+                f"shadow it. Pass override=True to replace intentionally."
+            )
         self.capabilities[capability.name] = capability
         self.tool_handlers[capability.name] = handler
     
@@ -327,10 +364,22 @@ class SMCPNode:
     
     def _handle_handshake(self, message: SMCPMessage) -> SMCPMessage:
         """Handle handshake. Mutual auth: echo the client's nonce so it can confirm we hold the
-        shared secret and are answering THIS handshake (not a replay)."""
+        shared secret and are answering THIS handshake (not a replay).
+
+        Version negotiation: the client advertises its protocol_version; a
+        mismatched MAJOR version means incompatible framing/crypto, so the
+        handshake is refused rather than proceeding into undefined behaviour.
+        """
+        client_version = (message.payload or {}).get("protocol_version", PROTOCOL_VERSION)
+        if _protocol_major(client_version) != _protocol_major(PROTOCOL_VERSION):
+            return self.create_error_response(
+                message.id,
+                f"Incompatible protocol version {client_version!r}; this node speaks "
+                f"{PROTOCOL_VERSION}",
+            )
         return self.create_message(MessageType.HANDSHAKE, {
             "node_id": self.node_id,
-            "protocol_version": "3.0",
+            "protocol_version": PROTOCOL_VERSION,
             "capabilities_count": len(self.capabilities),
             "encryption_enabled": True,
             "client_nonce": (message.payload or {}).get("nonce", "")
@@ -350,8 +399,9 @@ class SMCPNode:
             return self.create_error_response(message.id, "Authentication failed")
 
         client_id = str(message.payload.get("client_id", "client"))
-        permissions = ["tool_invoke", "discovery"]
+        permissions = self._grant_permissions(client_id)
         token = self.security.generate_jwt(client_id, permissions)
+        self._emit_audit({"event": "auth", "client_id": client_id, "permissions": permissions})
         self.auth_tokens[token] = {
             "client_id": client_id,
             "permissions": permissions,
@@ -363,6 +413,21 @@ class SMCPNode:
             "expires_in": 3600
         })
     
+    def _grant_permissions(self, client_id: str) -> List[str]:
+        """Resolve the scopes to grant a client at auth time.
+
+        Consults `permission_policy` (dict or callable) for least-privilege,
+        per-client `tool:<name>` scoping. Falls back to the broad
+        `["tool_invoke","discovery"]` default when no policy applies, preserving
+        backward-compatible behaviour.
+        """
+        policy = getattr(self, "permission_policy", None)
+        if policy is not None:
+            perms = policy(client_id) if callable(policy) else policy.get(client_id)
+            if perms:
+                return list(perms)
+        return ["tool_invoke", "discovery"]
+
     def _handle_capability_discovery(self, message: SMCPMessage) -> SMCPMessage:
         """Handle capability discovery"""
         if not self._is_authorized(message.payload.get("token"), "discovery"):
@@ -398,6 +463,8 @@ class SMCPNode:
             token = message.payload.get("token")
             if not (self._is_authorized(token, f"tool:{tool_name}")
                     or self._is_authorized(token, "tool_invoke")):
+                self._emit_audit({"event": "authz_denied", "tool": tool_name,
+                                  "client_id": self._client_id_for(token)})
                 return self.create_error_response(message.id, "Unauthorized")
 
         # Validate parameters against the declared capability schema before dispatch.
@@ -406,8 +473,26 @@ class SMCPNode:
             if error:
                 return self.create_error_response(message.id, f"Invalid parameters: {error}")
 
+        client_id = self._client_id_for(message.payload.get("token"))
+
+        # Consent / policy gate (human-in-the-loop). Denials are audited.
+        if self.consent_hook is not None:
+            try:
+                allowed = self.consent_hook(tool_name, parameters, client_id)
+            except Exception:
+                allowed = False
+            if not allowed:
+                self._emit_audit({"event": "invoke_denied", "tool": tool_name,
+                                  "client_id": client_id})
+                return self.create_error_response(message.id, "Tool invocation denied by policy")
+
         try:
             result = self.tool_handlers[tool_name](**parameters)
+            # Optional output filtering (redaction / tainting) before returning.
+            if self.output_filter is not None:
+                result = self.output_filter(tool_name, result)
+            self._emit_audit({"event": "invoke", "tool": tool_name,
+                              "client_id": client_id, "status": "success"})
             return self.create_message(MessageType.TOOL_RESPONSE, {
                 "tool_name": tool_name,
                 "result": result,
@@ -419,7 +504,28 @@ class SMCPNode:
         except Exception:
             # Do not leak internal exception detail to the caller.
             self._log_internal_error(tool_name)
+            self._emit_audit({"event": "invoke", "tool": tool_name,
+                              "client_id": client_id, "status": "error"})
             return self.create_error_response(message.id, "Tool execution failed")
+
+    def _emit_audit(self, event: Dict[str, Any]) -> None:
+        """Emit a structured audit event to the configured hook (best-effort)."""
+        hook = getattr(self, "audit_hook", None)
+        if hook is None:
+            return
+        try:
+            event.setdefault("ts", time.time())
+            event.setdefault("node_id", self.node_id)
+            hook(event)
+        except Exception:
+            self._log_internal_error("audit_hook")
+
+    def _client_id_for(self, token: Optional[str]) -> Optional[str]:
+        """Best-effort client identity from a session token (for audit/consent)."""
+        if not token:
+            return None
+        payload = self.security.verify_jwt(token)
+        return (payload or {}).get("client_id")
 
     @staticmethod
     def _validate_parameters(parameters: Dict[str, Any], schema: Dict[str, Any]) -> Optional[str]:

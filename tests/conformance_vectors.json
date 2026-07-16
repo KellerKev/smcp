@@ -1,0 +1,37 @@
+{
+  "key_schedule": {
+    "kdf_salt": "interop-salt",
+    "mac_key_hex": "c68909537fa0d9cba6806e8d86635a1ae06753ac24c5a29bf5500b01cba0024d",
+    "pbkdf2_iterations": 600000,
+    "secret_key": "interop-secret-value-32-bytes-xx"
+  },
+  "protocol_version": "3.0",
+  "signatures": [
+    {
+      "id": "fixedid",
+      "payload": {
+        "x": 1
+      },
+      "signature": "661c3041e7cc52690927113ca9bc39c08899613f94e7d770addecd349374f8ca",
+      "timestamp": 1700000000.0,
+      "type": "auth"
+    },
+    {
+      "id": "m2",
+      "payload": {
+        "a": 1,
+        "b": 2
+      },
+      "signature": "ebfa06119a1d7b424ed7988d2029171982c563d5ae1132f169229e2d37e12993",
+      "timestamp": 1700000001.0,
+      "type": "tool_invoke"
+    },
+    {
+      "id": "m3",
+      "payload": {},
+      "signature": "2bcb8fa54fd88171498e2d51e4d2b808b12193488c187521903eced66f90e044",
+      "timestamp": 1700000002.5,
+      "type": "heartbeat"
+    }
+  ]
+}

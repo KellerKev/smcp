@@ -134,6 +134,39 @@ def test_execute_task_dispatches_to_real_handler():
     assert result == {"echoed": "hi"}
 
 
+# --------------------------------------------------------------------------- #
+# P1a: distributed dispatch authorizes the inner task_type
+# --------------------------------------------------------------------------- #
+def _dist_agent(node_id, port):
+    reg = DistributedNodeRegistry(ClusterConfig(simulate_distributed=False))
+    a = DistributedA2AAgent(cfg(node_id, port), agent_info(node_id), reg, encrypted_storage=False)
+    a.register_capability(
+        Capability(name="echo", description="", parameters={"msg": {"type": "string"}}),
+        lambda msg: {"echoed": msg})
+    return a
+
+
+def test_distributed_dispatch_allows_app_handler():
+    a = _dist_agent("n1", 8861)
+    assert a._distributed_dispatch({"task_type": "echo", "task_data": {"msg": "hi"}}) == {"echoed": "hi"}
+
+
+def test_distributed_dispatch_blocks_control_plane():
+    # A peer authorized only for distributed_task_execute must not be able to
+    # invoke control-plane capabilities (lateral movement).
+    a = _dist_agent("n1", 8862)
+    for cap in ("cross_server_delegate", "distributed_workflow", "multi_server_collaboration"):
+        r = a._distributed_dispatch({"task_type": cap, "task_data": {}})
+        assert r.get("status") == "error", cap
+
+
+def test_distributed_dispatch_respects_explicit_allowlist():
+    a = _dist_agent("n1", 8863)
+    a.remote_task_allowlist = set()  # nothing remotely invocable
+    r = a._distributed_dispatch({"task_type": "echo", "task_data": {"msg": "x"}})
+    assert r.get("status") == "error"
+
+
 def test_execute_task_no_handler_is_honest():
     a = SMCPAgent(cfg("solo"), agent_info("solo"), AgentRegistry())
     result = a._execute_task(Task(task_id="t1", type="unknown", description="", input_data={}),

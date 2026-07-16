@@ -92,7 +92,7 @@ def test_consul_provider_with_mocked_http():
         {"Node": {"Address": "10.0.0.2"},
          "Service": {"ID": "smcp-2", "Service": "smcp", "Port": 8766}},
     ]
-    p = ConsulProvider("http://consul:8500", "smcp", session_factory=_factory(payload))
+    p = ConsulProvider("https://consul:8500", "smcp", session_factory=_factory(payload))
     nodes = asyncio.run(p.discover())
     assert nodes[0] == {"node_id": "smcp-1", "host": "10.0.0.1", "port": 8765, "capabilities": ["ai"]}
     # second entry falls back to Node.Address for host
@@ -112,7 +112,7 @@ def test_etcd_provider_with_mocked_http():
         kv({"node_id": "gpu_1", "host": "10.0.0.3", "port": 8765, "capabilities": ["ai"]}),
         kv({"node_id": "store", "host": "10.0.0.4", "port": 8768}),
     ]}
-    p = EtcdProvider("http://etcd:2379", "/smcp/nodes/", session_factory=_factory(payload))
+    p = EtcdProvider("https://etcd:2379", "/smcp/nodes/", session_factory=_factory(payload))
     nodes = asyncio.run(p.discover())
     assert {n["node_id"] for n in nodes} == {"gpu_1", "store"}
     assert nodes[0]["capabilities"] == ["ai"]
@@ -132,6 +132,63 @@ def test_make_provider_dispatch():
     assert isinstance(make_provider("etcd", [], {"etcd_url": "u", "etcd_prefix": "/p/"}), EtcdProvider)
     with pytest.raises(ValueError):
         make_provider("bogus", [], {})
+
+
+# --- P2 hardening ---------------------------------------------------------- #
+def test_consul_plaintext_nonloopback_rejected():
+    # A plaintext discovery backend on a non-loopback host must be refused.
+    p = ConsulProvider("http://consul.example.com:8500", "smcp",
+                       session_factory=_factory([]))
+    with pytest.raises(ValueError):
+        asyncio.run(p.discover())
+
+
+def test_consul_plaintext_loopback_allowed_with_flag():
+    p = ConsulProvider("http://127.0.0.1:8500", "smcp",
+                       session_factory=_factory([]), allow_insecure=True)
+    assert asyncio.run(p.discover()) == []
+
+
+def test_non_http_scheme_rejected():
+    p = EtcdProvider("file:///etc/passwd", "/p/", session_factory=_factory({}))
+    with pytest.raises(ValueError):
+        asyncio.run(p.discover())
+
+
+def test_consul_malformed_port_skipped():
+    payload = [{"Service": {"ID": "s1", "Address": "10.0.0.1", "Port": "not-a-number"}},
+               {"Service": {"ID": "s2", "Address": "10.0.0.2", "Port": 8765}}]
+    p = ConsulProvider("https://consul:8500", "smcp", session_factory=_factory(payload))
+    nodes = asyncio.run(p.discover())
+    assert [n["node_id"] for n in nodes] == ["s2"]  # bad entry skipped, not crashed
+
+
+def test_discovery_does_not_repoint_static_node(monkeypatch):
+    from smcp_config import ClusterConfig, SMCPConfig
+    from smcp_distributed_a2a import DistributedNodeRegistry
+    from smcp_distributed_transport import PeerConnectionPool
+    import secrets as _secrets
+
+    reg = DistributedNodeRegistry(ClusterConfig(
+        simulate_distributed=False, discovery_method="dns",
+        discovery_config={"service_name": "s"},
+        nodes=[{"node_id": "trusted", "host": "10.0.0.9", "port": 8765}],
+    ))
+
+    class _P:  # poisoned backend repoints the trusted node to an attacker host
+        async def discover(self):
+            return [{"node_id": "trusted", "host": "6.6.6.6", "port": 9999, "capabilities": []}]
+
+    monkeypatch.setattr("smcp_discovery.make_provider", lambda *a, **k: _P())
+    c = SMCPConfig(node_id="x", api_key="cfg_" + _secrets.token_urlsafe(24),
+                   secret_key=_secrets.token_urlsafe(32), jwt_secret=_secrets.token_urlsafe(32),
+                   kdf_salt=_secrets.token_urlsafe(16))
+    c.security.allow_insecure_transit = True
+    reg.peer_pool = PeerConnectionPool(c)
+    asyncio.run(reg.discover_nodes())
+    # The statically-trusted node kept its configured host/port.
+    assert reg.nodes["trusted"].host == "10.0.0.9"
+    assert reg.nodes["trusted"].port == 8765
 
 
 # --- registry integration -------------------------------------------------- #

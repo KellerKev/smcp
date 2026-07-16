@@ -13,8 +13,8 @@ SMCP (Secure Model Context Protocol) is a security-hardened extension of MCP (Mo
 | **Encryption** | Not included | Optional (AES-256, TLS) |
 | **Authentication** | Not included | JWT, OAuth2, API keys |
 | **Multi-Agent** | Not supported | Full A2A coordination |
-| **Backward Compatible** | N/A | 100% MCP compatible |
-| **Production Ready** | Yes | Core hardened & test-covered; A2A layer still demo-grade |
+| **MCP interop** | N/A | Standalone protocol; keeps MCP's tool model and bridges to MCP servers (not JSON-RPC on the wire) |
+| **Production Ready** | Yes | Core + A2A hardened & test-covered; bridged MCP calls ride TLS+bearer (not the full SMCP protocol) |
 | **Use Case** | Development, simple integrations | Security-sensitive, multi-agent scenarios |
 
 ## Detailed Feature Comparison
@@ -45,12 +45,12 @@ Example MCP Message:
 #### SMCP (Secure Model Context Protocol)
 ```
 Core Components:
-├── MCP foundation (100% compatible)
-├── Security layer (pluggable)
+├── MCP tool model (bridged to MCP servers)
+├── Security layer (auth, encryption, signing, replay)
 ├── A2A coordination layer
 ├── Agent registry & discovery
 ├── Encrypted message options
-└── Audit & compliance layer
+└── Structured audit hooks
 
 Example SMCP Message (Encrypted Mode):
 {

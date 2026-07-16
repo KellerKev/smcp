@@ -43,7 +43,7 @@ with an audit trail (see [Security modes](#-security-modes) below).
 > **Status:** SMCP's *core* — auth (API-key / JWT / RS256), per-message encryption,
 > replay protection, per-tool authorization, TLS enforcement, fail-closed config, the connectors,
 > and external-IdP OAuth2 — is security-hardened and covered by an automated test suite (`pixi run
-> test`, 137 tests). The DuckDB connector fails closed at the engine level (host filesystem/network
+> test`, 164 tests). The DuckDB connector fails closed at the engine level (host filesystem/network
 > access is off unless opted in, and raw SQL is screened for file/network/extension access); the
 > filesystem connector enforces its extension allowlist symmetrically on read/delete/list; and
 > `SMCPConfig.load()` preserves every setting (TLS, JWT algorithm, and the full OAuth2/crypto/cluster
@@ -52,11 +52,24 @@ with an audit trail (see [Security modes](#-security-modes) below).
 > test suite), with pluggable discovery (static / DNS-SRV / Consul / etcd). Federated auth supports an
 > RS256 issuer — one node mints tokens with a private key, peers verify with the public key and cannot
 > forge — plus audience/issuer-bound tokens, per-node asymmetric forwarding proofs (no shared secret
-> can forge), and optional forward-secret ECDH session keys.
+> can forge), and optional forward-secret ECDH session keys. Capability shadowing is refused, tool
+> invocation supports pluggable consent/output-filter hooks and a structured audit stream, and the
+> handshake negotiates protocol version. The wire protocol is specified in
+> [docs/SMCP_PROTOCOL.md](docs/SMCP_PROTOCOL.md) with conformance vectors so third parties can build
+> interoperable clients.
+>
+> SMCP is a standalone secure agent protocol (its own client, server, and A2A spec), not JSON-RPC/MCP
+> on the wire; it interoperates with MCP through the bridge. LLM-layer threats (prompt injection, tool
+> poisoning) are the operator's responsibility via the safety hooks — SMCP secures the transport,
+> identity, and authorization, and provides the hooks, but ships no built-in prompt-injection defense.
 
 See the [Roadmap](ROADMAP.md) for what's deferred and current limitations.
 
 ## 📚 Documentation
+
+### Protocol specs
+- [**SMCP Wire Protocol**](docs/SMCP_PROTOCOL.md) - Normative v3.0 spec (envelope, key schedule, signing, state machine) with conformance vectors
+- [**SMCP A2A Spec**](docs/SMCP_A2A_SPEC.md) - Agents, discovery, federated forwarding, proofs, session keys
 
 ### Architecture & Design
 - [**Architecture Overview**](docs/ARCHITECTURE_OVERVIEW.md) - Complete system architecture, data flows, and design patterns

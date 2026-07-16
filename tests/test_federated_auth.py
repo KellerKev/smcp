@@ -325,10 +325,96 @@ def test_hmac_fallback_when_no_proof_keys():
     # Without proof keys, proofs use the shared-secret HMAC and still verify.
     A = FederatedAuthManager(_proof_config(), "nodeA")
     B = FederatedAuthManager(_proof_config(), "nodeB")  # same jwt_secret via _config()
-    signed = A.sign_forwarding_proof(_proof("nodeA", target=""))
+    signed = A.sign_forwarding_proof(_proof("nodeA", target="nodeB"))
     assert signed["sig_alg"] == "HS256"
     ok, _ = B.verify_forwarding_proof(signed)
     assert ok
+
+
+def test_empty_forwarded_to_rejected():
+    # P1c: an empty forwarded_to must NOT opt out of target binding.
+    A = FederatedAuthManager(_proof_config(), "nodeA")
+    B = FederatedAuthManager(_proof_config(), "nodeB")
+    signed = A.sign_forwarding_proof(_proof("nodeA", target=""))
+    ok, _ = B.verify_forwarding_proof(signed)
+    assert not ok
+
+
+def test_from_node_must_match_forwarded_by():
+    # P1c: the transport sender (from_node) must equal the proof signer.
+    from smcp_federated_auth import FederatedSCPNode
+    node = FederatedSCPNode(_config(), "nodeB")
+    # Give nodeB a session key for 'attacker' so decryption gets far enough to reach
+    # the reconciliation check, and encrypt a payload with a proof signed by 'nodeA'.
+    A = FederatedAuthManager(_config(), "nodeA")
+    A.trust_forwarder("nodeA")
+    node.auth_manager.trust_forwarder("nodeA")
+    # Establish a shared static session key between the two managers under key 'attacker'.
+    import asyncio as _aio
+    sk = _aio.run(A.negotiate_session_key("nodeB", "jwt"))
+    node.auth_manager.session_keys["attacker"] = sk
+    proof = A.sign_forwarding_proof(_proof("nodeA", target="nodeB"))
+    payload = {"task": {"type": "ai_reasoning"}, "auth_proof": proof,
+               "forwarding_metadata": {"original_client": "u", "forwarding_path": [], "task_id": "t"}}
+    enc = A.encrypt_with_session_key(payload, sk)
+    # from_node='attacker' but the proof says forwarded_by='nodeA' -> must be rejected.
+    r = _aio.run(node.handle_forwarded_request(enc, "attacker"))
+    assert r["status"] == "error"
+    assert "forwarded_by" in r["error"]
+
+
+def test_proof_algorithm_downgrade_rejected(tmp_path):
+    # P0a: an insider with the shared jwt_secret must not be able to forge a proof
+    # for a signer that has a registered PS256 public key by downgrading to HS256.
+    import hmac as _hmac, hashlib, json as _json
+    a_priv, a_pub = _proof_keypair(tmp_path, "A")
+    B = FederatedAuthManager(_proof_config(), "nodeB")
+    B.register_peer_public_key("nodeA", str(a_pub))
+    pd = {"client_jwt": "x", "forwarded_by": "nodeA", "forwarded_at": 0.0,
+          "task_hash": "h", "forwarded_to": "nodeB", "nonce": "n1", "expires_at": 9e9}
+    msg = _json.dumps(pd, sort_keys=True).encode()
+    forged = {"proof": pd,
+              "signature": _hmac.new(SECRET.encode(), msg, hashlib.sha256).hexdigest(),
+              "sig_alg": "HS256"}
+    ok, _ = B.verify_forwarding_proof(forged)
+    assert not ok  # downgrade rejected
+
+
+def test_pfs_forward_without_ecdh_refused():
+    # P0b: with forward secrecy enabled, a forward that skips the ECDH exchange
+    # (no session key) must be refused rather than falling back to the static key.
+    from smcp_federated_auth import FederatedSCPNode
+    cfg = _config()
+    cfg.crypto.perfect_forward_secrecy = True
+    node = FederatedSCPNode(cfg, "nodeB")
+    r = asyncio.run(node.handle_forwarded_request(
+        {"encrypted_data": "00", "nonce": "00", "tag": "00"}, "nodeA"))
+    assert r["status"] == "error"
+    assert "forward-secret session" in r["error"].lower()
+
+
+def test_strict_asymmetric_mode_rejects_hmac_proof(tmp_path):
+    # P3: a node running per-node asymmetric proofs rejects any shared-secret
+    # (HMAC) proof, even from a signer without a registered key.
+    b_priv, _ = _proof_keypair(tmp_path, "B")
+    A = FederatedAuthManager(_proof_config(), "nodeA")            # HMAC signer
+    B = FederatedAuthManager(_proof_config(b_priv), "nodeB")       # asymmetric node
+    hmac_proof = A.sign_forwarding_proof(_proof("nodeA", target="nodeB"))
+    assert hmac_proof["sig_alg"] == "HS256"
+    ok, _ = B.verify_forwarding_proof(hmac_proof)
+    assert not ok
+
+
+def test_session_aad_binding_detects_session_id_tamper():
+    # P3: the session_id is authenticated (GCM AAD), so tampering with it fails.
+    A = FederatedAuthManager(_config(), "nodeA")
+    B = FederatedAuthManager(_config(), "nodeB")
+    ka = asyncio.run(A.negotiate_session_key("nodeB", "jwt"))
+    B.session_keys["nodeA"] = ka  # same static key on both sides
+    env = A.encrypt_with_session_key({"msg": "secret"}, ka)
+    env["session_id"] = "attacker:victim"  # tamper
+    with pytest.raises(ValueError):
+        B.decrypt_with_session_key(env, "nodeA")
 
 
 # --------------------------------------------------------------------------- #

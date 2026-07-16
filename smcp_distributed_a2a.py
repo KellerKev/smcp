@@ -32,6 +32,18 @@ class NodeStatus(Enum):
     ERROR = "error"
 
 
+# Control-plane / A2A orchestration capabilities that must NEVER be invocable
+# through the remote `distributed_task_execute` entry point: they let a caller
+# pivot to further nodes or drive orchestration, so exposing them to any peer
+# authorized only for distributed_task_execute would be a lateral-movement /
+# authorization-bypass primitive. Application handlers are allow-listed instead.
+_CONTROL_PLANE_CAPABILITIES = frozenset({
+    "cross_server_delegate", "distributed_workflow", "multi_server_collaboration",
+    "agent_discovery", "task_delegate", "workflow_execute", "collaborate",
+    "distributed_task_execute", "federated_forward", "federated_key_exchange",
+})
+
+
 @dataclass
 class DistributedNode:
     """Represents a node in the distributed cluster"""
@@ -68,10 +80,14 @@ class DistributedNodeRegistry:
         # not in simulate_distributed mode. When present, health checks and
         # cross-node calls go over the real SMCP WebSocket RPC.
         self.peer_pool = None
+        # Node ids that came from static config are authoritative: discovery may
+        # ADD nodes but must not repoint a statically-trusted node's host/port
+        # (a poisoned discovery backend could otherwise redirect its traffic).
+        self._static_node_ids: set = set()
 
         # Initialize nodes from config
         self._initialize_nodes()
-    
+
     def _initialize_nodes(self):
         """Initialize nodes from configuration"""
         if self.config.simulate_distributed:
@@ -80,6 +96,7 @@ class DistributedNodeRegistry:
         else:
             # Use configured nodes
             for node_config in self.config.nodes:
+                self._static_node_ids.add(node_config["node_id"])
                 node = DistributedNode(
                     node_id=node_config["node_id"],
                     host=node_config["host"],
@@ -201,14 +218,22 @@ class DistributedNodeRegistry:
         self.logger.info(f"Registered local agent: {agent.agent_info.name}")
     
     def find_nodes_by_capability(self, capability: str) -> List[DistributedNode]:
-        """Find nodes that have a specific capability"""
-        matching_nodes = []
-        for node in self.nodes.values():
-            if capability in node.capabilities and node.is_healthy:
-                matching_nodes.append(node)
-        
-        # Sort by load or other criteria (simplified)
-        return sorted(matching_nodes, key=lambda n: n.last_heartbeat, reverse=True)
+        """Find healthy nodes advertising a capability.
+
+        Statically-configured (trusted) nodes are preferred over dynamically
+        discovered ones, so a poisoned discovery backend advertising a trusted
+        capability name cannot shadow the real provider in routing.
+        """
+        matching_nodes = [
+            node for node in self.nodes.values()
+            if capability in node.capabilities and node.is_healthy
+        ]
+        # Trusted (static) first, then by freshness.
+        return sorted(
+            matching_nodes,
+            key=lambda n: (n.node_id in self._static_node_ids, n.last_heartbeat),
+            reverse=True,
+        )
     
     def get_best_node_for_capability(self, capability: str) -> Optional[DistributedNode]:
         """Get the best available node for a capability"""
@@ -256,15 +281,26 @@ class DistributedNodeRegistry:
         )
         discovered = await provider.discover()
         for nd in discovered:
-            existing = self.nodes.get(nd["node_id"])
+            nid = nd.get("node_id")
+            host, port = nd.get("host"), nd.get("port")
+            # Validate shape; a malformed/poisoned entry must not crash discovery.
+            if not nid or not host or not isinstance(port, int) or not (0 < port < 65536):
+                self.logger.warning(f"Discovery returned an invalid node entry; skipping: {nd!r}")
+                continue
+            existing = self.nodes.get(nid)
             if existing is None:
-                self.nodes[nd["node_id"]] = DistributedNode(
-                    node_id=nd["node_id"], host=nd["host"], port=nd["port"],
+                self.nodes[nid] = DistributedNode(
+                    node_id=nid, host=host, port=port,
                     capabilities=nd.get("capabilities", []),
                 )
+            elif nid in self._static_node_ids:
+                # Statically-trusted node: discovery must not repoint it.
+                self.logger.warning(
+                    f"Discovery tried to repoint statically-configured node {nid!r}; ignoring"
+                )
             else:
-                existing.host = nd["host"]
-                existing.port = nd["port"]
+                existing.host = host
+                existing.port = port
                 if nd.get("capabilities"):
                     existing.capabilities = nd["capabilities"]
 
@@ -308,30 +344,55 @@ class DistributedA2AAgent(SMCPAgent):
         # Register distributed capabilities
         self._register_distributed_capabilities()
 
+    def _remote_allowed_task_types(self) -> set:
+        """Task types a peer may invoke through `distributed_task_execute`.
+
+        Defaults to this node's registered *application* handlers minus the
+        control-plane capabilities (so a peer cannot pivot via cross_server_delegate
+        etc.). Override by setting `self.remote_task_allowlist` to an explicit set.
+        """
+        if getattr(self, "remote_task_allowlist", None) is not None:
+            return set(self.remote_task_allowlist)
+        return set(getattr(self, "tool_handlers", {}).keys()) - _CONTROL_PLANE_CAPABILITIES
+
     def _distributed_dispatch(self, task: Dict[str, Any]) -> Any:
         """Run a task delegated from a peer over the network.
 
-        This is the receiving side of a real cross-node call: a peer invokes the
-        ``distributed_task_execute`` capability, and we execute it through the
-        same real handler-dispatch used locally (``_execute_task``).
+        The receiving side of a real cross-node call. The peer is authenticated for
+        the single `distributed_task_execute` capability; here we additionally
+        authorize the *inner* task_type against an allowlist so it cannot be used to
+        reach arbitrary (or control-plane) handlers — closing the authorization
+        bypass where any task_type would run any registered handler.
         """
+        task_type = task.get("task_type")
+        if task_type not in self._remote_allowed_task_types():
+            return {
+                "status": "error",
+                "error": f"Task type {task_type!r} is not authorized for remote invocation",
+                "task_type": task_type,
+            }
         t = Task(
             task_id=task.get("task_id", str(uuid.uuid4())),
-            type=task.get("task_type"),
-            description=f"Delegated task: {task.get('task_type')}",
+            type=task_type,
+            description=f"Delegated task: {task_type}",
             input_data=task.get("task_data", {}),
         )
         return self._execute_task(t, self.agent_info)
 
-    def make_task_server(self, config: Optional[SMCPConfig] = None):
+    def make_task_server(self, config: Optional[SMCPConfig] = None,
+                         allowed_task_types: Optional[list] = None):
         """Build a DistributedTaskServer that serves this agent's real dispatch.
 
         Run one per node so peers can reach it over the SMCP WebSocket RPC. The
         server exposes the ``distributed_task_execute`` capability wired to
-        ``_distributed_dispatch``. Pass a config whose ``server`` host/port is the
-        address this node should bind (defaults to this agent's config).
+        ``_distributed_dispatch``. Pass ``allowed_task_types`` to restrict which
+        task types peers may invoke (defaults to this node's non-control-plane
+        handlers). Pass a config whose ``server`` host/port is the address this
+        node should bind (defaults to this agent's config).
         """
         from smcp_distributed_transport import DistributedTaskServer
+        if allowed_task_types is not None:
+            self.remote_task_allowlist = set(allowed_task_types)
         return DistributedTaskServer(config or self.config, self._distributed_dispatch)
 
     def _register_distributed_capabilities(self):

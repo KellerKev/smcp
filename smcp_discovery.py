@@ -79,7 +79,11 @@ class DNSProvider(DiscoveryProvider):
         nodes = []
         for rec in self._resolve():
             host = str(getattr(rec, "target", "")).rstrip(".")
-            port = int(getattr(rec, "port"))
+            try:
+                port = int(getattr(rec, "port"))
+            except (TypeError, ValueError):
+                logger.warning("SRV record port is not an integer; skipping")
+                continue
             if not host:
                 continue
             nodes.append({
@@ -99,31 +103,37 @@ class ConsulProvider(DiscoveryProvider):
     """
 
     def __init__(self, consul_url: str, service_name: str, capabilities: List[str] = None,
-                 session_factory=None):
+                 session_factory=None, allow_insecure: bool = False):
         if not consul_url or not service_name:
             raise ValueError("consul discovery requires consul_url and service_name")
         self.consul_url = consul_url.rstrip("/")
         self.service_name = service_name
         self.capabilities = capabilities or []
         self._session_factory = session_factory  # injectable for tests
+        self.allow_insecure = allow_insecure
 
     async def discover(self) -> List[Dict[str, Any]]:
         url = f"{self.consul_url}/v1/health/service/{self.service_name}?passing=1"
-        data = await _http_get_json(url, self._session_factory)
+        data = await _http_get_json(url, self._session_factory, self.allow_insecure)
         nodes = []
         for entry in data or []:
             svc = entry.get("Service", {})
             node = entry.get("Node", {})
             host = svc.get("Address") or node.get("Address")
             port = svc.get("Port")
-            if not host or not port:
+            if not host or port is None:
+                continue
+            try:
+                port = int(port)
+            except (TypeError, ValueError):
+                logger.warning("consul service port is not an integer; skipping")
                 continue
             node_id = svc.get("ID") or svc.get("Service") or host
             caps = svc.get("Tags") or list(self.capabilities)
             nodes.append({
                 "node_id": node_id,
                 "host": host,
-                "port": int(port),
+                "port": port,
                 "capabilities": caps,
             })
         return nodes
@@ -136,12 +146,14 @@ class EtcdProvider(DiscoveryProvider):
     JSON node document (``{"node_id","host","port","capabilities"}``).
     """
 
-    def __init__(self, etcd_url: str, etcd_prefix: str, session_factory=None):
+    def __init__(self, etcd_url: str, etcd_prefix: str, session_factory=None,
+                 allow_insecure: bool = False):
         if not etcd_url or not etcd_prefix:
             raise ValueError("etcd discovery requires etcd_url and etcd_prefix")
         self.etcd_url = etcd_url.rstrip("/")
         self.etcd_prefix = etcd_prefix
         self._session_factory = session_factory  # injectable for tests
+        self.allow_insecure = allow_insecure
 
     @staticmethod
     def _range_end(prefix: str) -> str:
@@ -159,7 +171,7 @@ class EtcdProvider(DiscoveryProvider):
             "key": base64.b64encode(self.etcd_prefix.encode()).decode(),
             "range_end": self._range_end(self.etcd_prefix),
         }
-        data = await _http_post_json(url, body, self._session_factory)
+        data = await _http_post_json(url, body, self._session_factory, self.allow_insecure)
         nodes = []
         for kv in (data or {}).get("kvs", []):
             raw = kv.get("value")
@@ -170,31 +182,67 @@ class EtcdProvider(DiscoveryProvider):
             except (ValueError, json.JSONDecodeError):
                 logger.warning("etcd value is not valid node JSON; skipping")
                 continue
-            if not doc.get("host") or not doc.get("port"):
+            if not doc.get("host") or doc.get("port") is None:
+                continue
+            try:
+                port = int(doc["port"])
+            except (TypeError, ValueError):
+                logger.warning("etcd node port is not an integer; skipping")
                 continue
             nodes.append({
                 "node_id": doc.get("node_id") or doc["host"],
                 "host": doc["host"],
-                "port": int(doc["port"]),
+                "port": port,
                 "capabilities": doc.get("capabilities", []),
             })
         return nodes
 
 
-async def _http_get_json(url: str, session_factory=None):
-    import aiohttp
-    factory = session_factory or aiohttp.ClientSession
-    async with factory() as session:
-        async with session.get(url) as resp:
-            return await resp.json()
+_DISCOVERY_HTTP_TIMEOUT = 5  # seconds; a slow backend must not stall discovery
 
 
-async def _http_post_json(url: str, body: Dict[str, Any], session_factory=None):
+def _check_discovery_url(url: str, allow_insecure: bool):
+    """Refuse plaintext discovery backends to non-loopback hosts (topology feeds
+    are security-sensitive — a poisoned/MITM'd response controls routing), and
+    reject non-http(s) schemes (SSRF hardening)."""
+    from urllib.parse import urlparse
+    from smcp_config import enforce_secure_url
+    scheme = (urlparse(url).scheme or "").lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(f"discovery url must be http(s): {url!r}")
+    enforce_secure_url(url, allow_insecure=allow_insecure)
+
+
+async def _http_get_json(url: str, session_factory=None, allow_insecure: bool = False):
     import aiohttp
+    _check_discovery_url(url, allow_insecure)
     factory = session_factory or aiohttp.ClientSession
-    async with factory() as session:
-        async with session.post(url, json=body) as resp:
-            return await resp.json()
+    timeout = aiohttp.ClientTimeout(total=_DISCOVERY_HTTP_TIMEOUT)
+    try:
+        async with factory() as session:
+            async with session.get(url, timeout=timeout) as resp:
+                return await resp.json()
+    except TypeError:
+        # Injected test sessions may not accept a timeout kwarg.
+        async with factory() as session:
+            async with session.get(url) as resp:
+                return await resp.json()
+
+
+async def _http_post_json(url: str, body: Dict[str, Any], session_factory=None,
+                          allow_insecure: bool = False):
+    import aiohttp
+    _check_discovery_url(url, allow_insecure)
+    factory = session_factory or aiohttp.ClientSession
+    timeout = aiohttp.ClientTimeout(total=_DISCOVERY_HTTP_TIMEOUT)
+    try:
+        async with factory() as session:
+            async with session.post(url, json=body, timeout=timeout) as resp:
+                return await resp.json()
+    except TypeError:
+        async with factory() as session:
+            async with session.post(url, json=body) as resp:
+                return await resp.json()
 
 
 def make_provider(discovery_method: str, nodes: List[Dict[str, Any]],
@@ -207,7 +255,9 @@ def make_provider(discovery_method: str, nodes: List[Dict[str, Any]],
         return DNSProvider(cfg.get("service_name"), cfg.get("capabilities"))
     if discovery_method == "consul":
         return ConsulProvider(cfg.get("consul_url"), cfg.get("service_name"),
-                              cfg.get("capabilities"))
+                              cfg.get("capabilities"),
+                              allow_insecure=bool(cfg.get("allow_insecure", False)))
     if discovery_method == "etcd":
-        return EtcdProvider(cfg.get("etcd_url"), cfg.get("etcd_prefix"))
+        return EtcdProvider(cfg.get("etcd_url"), cfg.get("etcd_prefix"),
+                            allow_insecure=bool(cfg.get("allow_insecure", False)))
     raise ValueError(f"Unknown discovery_method: {discovery_method!r}")
