@@ -240,19 +240,37 @@ class DistributedNodeRegistry:
         return ok
 
     async def discover_nodes(self):
-        """Discover and update node status."""
-        if self.config.discovery_method == "static":
-            # Health-check every statically configured node.
-            tasks = [self.health_check_node(node) for node in self.nodes.values()]
-            await asyncio.gather(*tasks, return_exceptions=True)
-        elif self.config.discovery_method in ("consul", "etcd", "dns"):
-            # Fail honestly rather than silently succeeding with zero discovery.
-            raise NotImplementedError(
-                f"discovery_method={self.config.discovery_method!r} is not "
-                f"implemented; use 'static' with an explicit cluster.nodes list."
-            )
-        else:
-            raise ValueError(f"Unknown discovery_method: {self.config.discovery_method!r}")
+        """Discover peers via the configured provider, merge them into the node
+        table, then health-check everything.
+
+        Providers: static (cluster.nodes), dns (SRV), consul, etcd — see
+        smcp_discovery. Discovered nodes are merged (new ones added, existing
+        host/port/capabilities refreshed) before the real health check runs.
+        """
+        from smcp_discovery import make_provider
+
+        provider = make_provider(
+            self.config.discovery_method,
+            self.config.nodes,
+            getattr(self.config, "discovery_config", {}) or {},
+        )
+        discovered = await provider.discover()
+        for nd in discovered:
+            existing = self.nodes.get(nd["node_id"])
+            if existing is None:
+                self.nodes[nd["node_id"]] = DistributedNode(
+                    node_id=nd["node_id"], host=nd["host"], port=nd["port"],
+                    capabilities=nd.get("capabilities", []),
+                )
+            else:
+                existing.host = nd["host"]
+                existing.port = nd["port"]
+                if nd.get("capabilities"):
+                    existing.capabilities = nd["capabilities"]
+
+        # Health-check every known node over the real transport.
+        tasks = [self.health_check_node(node) for node in self.nodes.values()]
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class DistributedA2AAgent(SMCPAgent):

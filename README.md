@@ -43,15 +43,16 @@ with an audit trail (see [Security modes](#-security-modes) below).
 > **Status:** SMCP's *core* — auth (API-key / JWT / RS256), per-message encryption,
 > replay protection, per-tool authorization, TLS enforcement, fail-closed config, the connectors,
 > and external-IdP OAuth2 — is security-hardened and covered by an automated test suite (`pixi run
-> test`, 118 tests). The DuckDB connector fails closed at the engine level (host filesystem/network
+> test`, 137 tests). The DuckDB connector fails closed at the engine level (host filesystem/network
 > access is off unless opted in, and raw SQL is screened for file/network/extension access); the
 > filesystem connector enforces its extension allowlist symmetrically on read/delete/list; and
 > `SMCPConfig.load()` preserves every setting (TLS, JWT algorithm, and the full OAuth2/crypto/cluster
 > blocks) rather than silently dropping them. The distributed / agent-to-agent layer talks between
 > nodes over the authenticated SMCP WebSocket RPC (a 2-node socket round-trip is exercised by the
-> test suite). Federated auth supports an RS256 issuer — one node mints tokens with a private key,
-> peers verify with the public key and cannot forge — with audience/issuer-bound tokens and
-> target-bound forwarding proofs.
+> test suite), with pluggable discovery (static / DNS-SRV / Consul / etcd). Federated auth supports an
+> RS256 issuer — one node mints tokens with a private key, peers verify with the public key and cannot
+> forge — plus audience/issuer-bound tokens, per-node asymmetric forwarding proofs (no shared secret
+> can forge), and optional forward-secret ECDH session keys.
 
 See the [Roadmap](ROADMAP.md) for what's deferred and current limitations.
 
@@ -108,6 +109,20 @@ jwt_public_key_path  = "./jwt_keys/jwt_public.pem"    # every node
 
 Tokens are bound to the federation issuer/audience, forwarding proofs are bound to their target node,
 and cross-node calls run over the authenticated SMCP WebSocket RPC.
+
+**Hardening a federation further:**
+
+- **Per-node proof signing** — give each node its own keypair so no shared secret can forge a
+  forwarding proof. Set `security.proof_signing_key_path` on each node and register peers'
+  public keys via `add_peer(node_id, endpoint, proof_public_key_path=...)`. Generate per-node keys
+  with `tools/generate_jwt_keys.py generate -o keys/<node> -n <node>`. Without keys, proofs fall back
+  to the shared-secret HMAC.
+- **Forward secrecy** — set `crypto.perfect_forward_secrecy = true` to run an ephemeral ECDH
+  handshake per session (keys discarded after use), so compromising long-term secrets can't decrypt
+  past traffic.
+- **Node discovery** — set `cluster.discovery_method` to `static` (default), `dns` (SRV records),
+  `consul`, or `etcd`, with backend details in `cluster.discovery_config`. `dns` needs the optional
+  `dnspython` dependency; `consul`/`etcd` talk to their HTTP APIs directly.
 
 ### 🏢 External-IdP OAuth2 (enterprise mode)
 
@@ -371,21 +386,22 @@ This project is licensed under the MIT License.
 
 ## 🚦 Status
 
-- ✅ **Core SMCP**: security-hardened and test-covered (118 tests)
+- ✅ **Core SMCP**: security-hardened and test-covered (137 tests)
 - ✅ **Basic/Encrypted modes**: security-hardened, test-covered
 - ✅ **A2A / distributed system**: real multi-node networking over the authenticated SMCP
-  WebSocket RPC (handshake → auth → tool-invoke), with a 2-node socket test. Consul/etcd/DNS
-  discovery is not implemented (static config-driven discovery only); forward-secret ECDH session
-  keys are still deferred (shared-secret HKDF today)
+  WebSocket RPC (handshake → auth → tool-invoke), with a 2-node socket test. Pluggable node
+  discovery (`static` / `dns` / `consul` / `etcd`); Consul/etcd are unit-tested against mocked
+  backends and wired to real services in a deployment
 - ✅ **DuckDB / Filesystem connectors**: hardened, fail-closed by default, test-covered
 - ✅ **CrewAI Integration**: working demo (in the `integrations` env)
 - ✅ **MindsDB integration**: working demo (requires a MindsDB container)
 - ✅ **Enterprise / OAuth2 mode**: external-IdP token validation, hardened and test-covered
   (JWKS + static-key), verified against a mock OIDC provider
 - ✅ **Federated auth**: RS256 issuer/verify (an issuer mints with a private key, peers verify with
-  the public key and cannot forge), audience/issuer-bound tokens, target-bound forwarding proofs,
-  test-covered. HS256 shared-secret remains available for a single trust domain. Per-node
-  asymmetric forwarding proofs are the remaining deferred item
+  the public key and cannot forge), audience/issuer-bound tokens, per-node asymmetric forwarding
+  proofs (RSA-PSS; no shared secret can forge), and optional forward-secret ECDH session keys
+  (`crypto.perfect_forward_secrecy`), test-covered. HS256 shared-secret remains available for a
+  single trust domain
 
 ---
 

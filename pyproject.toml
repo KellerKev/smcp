@@ -25,6 +25,8 @@ dependencies = [
 # Needed by the (unpackaged) MCP bridge, distributed A2A, and DuckDB connector.
 bridge = ["aiohttp>=3.9,<4"]
 duckdb = ["duckdb>=0.9,<2"]
+# DNS-SRV node discovery for the distributed A2A layer (Consul/etcd use aiohttp).
+discovery = ["dnspython>=2.4,<3"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -84,6 +84,11 @@ class ClusterConfig:
     enabled: bool = False
     discovery_method: str = "static"  # "static", "consul", "etcd", "dns"
     nodes: List[Dict[str, Any]] = field(default_factory=list)
+    # Pluggable discovery config (used when discovery_method != "static"):
+    #   dns:    {"service_name": "_smcp._tcp.example.com", "capabilities": [...]}
+    #   consul: {"consul_url": "http://localhost:8500", "service_name": "smcp"}
+    #   etcd:   {"etcd_url": "http://localhost:2379", "etcd_prefix": "/smcp/nodes/"}
+    discovery_config: Dict[str, Any] = field(default_factory=dict)
     # Simplified mode: simulate multi-server on localhost
     simulate_distributed: bool = False
     simulate_ports: List[int] = field(default_factory=lambda: [8765, 8766, 8767])
@@ -124,6 +129,11 @@ class SecurityConfig:
     jwt_algorithm: str = "HS256"
     jwt_private_key_path: Optional[str] = None  # server: sign
     jwt_public_key_path: Optional[str] = None   # client/server: verify
+    # Per-node forwarding-proof signing (federated A2A). When set, this node
+    # signs forwarding proofs with its OWN private key (RSA-PSS) and peers verify
+    # against its registered public key — so no shared secret can forge a proof.
+    # When unset, proofs fall back to the shared-secret HMAC scheme.
+    proof_signing_key_path: Optional[str] = None
 
 
 @dataclass

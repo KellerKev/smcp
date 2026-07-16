@@ -18,7 +18,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, padding
+from cryptography.exceptions import InvalidSignature
 import secrets
 import jwt
 
@@ -95,12 +96,37 @@ class FederatedAuthManager:
         # Session key management
         self.session_keys: Dict[str, SessionKey] = {}  # peer_node_id -> SessionKey
         self.forwarding_nonces: Dict[str, float] = {}  # nonce -> timestamp (for replay prevention)
-        
+
         # Trust relationships
         self.trusted_forwarders: Dict[str, bool] = {}  # node_id -> trusted
-        
+
+        # Per-node forwarding-proof signing (asymmetric). When this node has its
+        # own private key, it signs proofs with RSA-PSS so no shared-secret holder
+        # can forge them; peers verify against the signer's registered public key.
+        # Without a private key, proofs fall back to the shared-secret HMAC scheme.
+        self.proof_private_key = None
+        self.peer_public_keys: Dict[str, Any] = {}  # node_id -> RSA public key object
+        proof_key_path = getattr(config.security, "proof_signing_key_path", None)
+        if proof_key_path:
+            with open(proof_key_path, "rb") as f:
+                self.proof_private_key = serialization.load_pem_private_key(f.read(), password=None)
+            # A node trusts its own proofs; register its own public key.
+            self.peer_public_keys[node_id] = self.proof_private_key.public_key()
+            self.logger.info("Forwarding proofs: per-node RSA-PSS signing (asymmetric)")
+
         # Initialize cryptographic components
         self._init_crypto()
+
+    def register_peer_public_key(self, node_id: str, public_key_path: str = None,
+                                 public_key_pem: bytes = None):
+        """Register a peer's forwarding-proof public key so this node can verify
+        proofs the peer signs. Provide a PEM path or PEM bytes."""
+        if public_key_pem is None:
+            if not public_key_path:
+                raise ValueError("register_peer_public_key needs a path or PEM bytes")
+            with open(public_key_path, "rb") as f:
+                public_key_pem = f.read()
+        self.peer_public_keys[node_id] = serialization.load_pem_public_key(public_key_pem)
     
     def _init_crypto(self):
         """Initialize cryptographic components"""
@@ -185,8 +211,18 @@ class FederatedAuthManager:
 
         return proof
 
+    @staticmethod
+    def _proof_message(proof_data: Dict[str, Any]) -> bytes:
+        return json.dumps(proof_data, sort_keys=True).encode()
+
     def sign_forwarding_proof(self, proof: ForwardingProof) -> Dict[str, Any]:
-        """Sign the forwarding proof to prevent tampering"""
+        """Sign the forwarding proof to prevent tampering.
+
+        When this node has its own private key, the proof is signed with RSA-PSS
+        (``sig_alg="PS256"``) so no shared-secret holder can forge it — verifiers
+        check it against this node's registered public key. Otherwise it falls
+        back to the shared-secret HMAC scheme.
+        """
         proof_data = {
             'client_jwt': proof.client_jwt,
             'forwarded_by': proof.forwarded_by,
@@ -196,38 +232,55 @@ class FederatedAuthManager:
             'nonce': proof.nonce,
             'expires_at': proof.expires_at
         }
-        
-        # Create signature using HMAC
-        message = json.dumps(proof_data, sort_keys=True).encode()
-        signature = hmac.new(
-            self.jwt_secret.encode(),
-            message,
-            hashlib.sha256
-        ).hexdigest()
-        
-        return {
-            'proof': proof_data,
-            'signature': signature
-        }
-    
+        message = self._proof_message(proof_data)
+
+        if self.proof_private_key is not None:
+            signature = self.proof_private_key.sign(
+                message,
+                padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                            salt_length=padding.PSS.MAX_LENGTH),
+                hashes.SHA256(),
+            ).hex()
+            return {'proof': proof_data, 'signature': signature, 'sig_alg': 'PS256'}
+
+        # Shared-secret HMAC fallback.
+        signature = hmac.new(self.jwt_secret.encode(), message, hashlib.sha256).hexdigest()
+        return {'proof': proof_data, 'signature': signature, 'sig_alg': 'HS256'}
+
     def verify_forwarding_proof(self, signed_proof: Dict[str, Any]) -> Tuple[bool, Optional[ForwardingProof]]:
         """Verify a signed forwarding proof"""
         try:
             proof_data = signed_proof['proof']
             provided_signature = signed_proof['signature']
-            
-            # Recreate signature
-            message = json.dumps(proof_data, sort_keys=True).encode()
-            expected_signature = hmac.new(
-                self.jwt_secret.encode(),
-                message,
-                hashlib.sha256
-            ).hexdigest()
-            
-            # Verify signature
-            if not hmac.compare_digest(provided_signature, expected_signature):
-                self.logger.warning("Invalid forwarding proof signature")
-                return False, None
+            sig_alg = signed_proof.get('sig_alg', 'HS256')
+            message = self._proof_message(proof_data)
+
+            if sig_alg == 'PS256':
+                # Asymmetric: verify against the signer's registered public key.
+                signer = proof_data.get('forwarded_by')
+                pub = self.peer_public_keys.get(signer)
+                if pub is None:
+                    self.logger.warning(f"No registered proof public key for signer {signer!r}")
+                    return False, None
+                try:
+                    pub.verify(
+                        bytes.fromhex(provided_signature),
+                        message,
+                        padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                                    salt_length=padding.PSS.MAX_LENGTH),
+                        hashes.SHA256(),
+                    )
+                except (InvalidSignature, ValueError):
+                    self.logger.warning("Invalid forwarding proof signature (PS256)")
+                    return False, None
+            else:
+                # Shared-secret HMAC.
+                expected_signature = hmac.new(
+                    self.jwt_secret.encode(), message, hashlib.sha256
+                ).hexdigest()
+                if not hmac.compare_digest(provided_signature, expected_signature):
+                    self.logger.warning("Invalid forwarding proof signature")
+                    return False, None
 
             # Verify the proof was intended for THIS node — a proof captured on
             # the wire cannot be replayed against a different target.
@@ -276,20 +329,84 @@ class FederatedAuthManager:
             self.logger.warning(f"Invalid forwarding proof format: {e}")
             return False, None
     
-    async def negotiate_session_key(self, peer_node_id: str, client_jwt: str) -> SessionKey:
-        """Negotiate ephemeral session key with another node"""
-        
-        # Check if we already have a valid session key
+    def _pfs_enabled(self) -> bool:
+        return bool(getattr(getattr(self.config, "crypto", None), "perfect_forward_secrecy", False))
+
+    def _derive_ecdh_session(self, peer_node_id: str, ephemeral_private, peer_pub_bytes: bytes) -> SessionKey:
+        """Derive a session key from an ECDH shared secret.
+
+        The HKDF salt is bound to the exchange transcript (both ephemeral public
+        keys, order-independent) so both peers derive the same 256-bit key from a
+        single round-trip without needing any pre-shared salt, and the key is
+        tied to this specific exchange. ``info`` binds the sorted node pair.
+        """
+        peer_pub = ec.EllipticCurvePublicKey.from_encoded_point(
+            ec.SECP256R1(), peer_pub_bytes)
+        shared = ephemeral_private.exchange(ec.ECDH(), peer_pub)
+        my_pub_bytes = ephemeral_private.public_key().public_bytes(
+            encoding=serialization.Encoding.X962,
+            format=serialization.PublicFormat.UncompressedPoint)
+        transcript = b"".join(sorted([my_pub_bytes, peer_pub_bytes]))
+        salt = hashlib.sha256(transcript).digest()
+        node_a = min(self.node_id, peer_node_id)
+        node_b = max(self.node_id, peer_node_id)
+        info = f"smcp-ecdh-session:{node_a}:{node_b}".encode()
+        key = HKDF(algorithm=hashes.SHA256(), length=32, salt=salt, info=info).derive(shared)
+        return SessionKey(key=key, node_a=node_a, node_b=node_b,
+                          created_at=time.time(), expires_at=time.time() + 900)
+
+    def perform_ecdh_exchange(self, peer_node_id: str, peer_pub_hex: str) -> str:
+        """Receiver side of the ECDH handshake: given the peer's ephemeral public
+        key, generate our own ephemeral keypair, derive+store the session key, and
+        return our ephemeral public key. The ephemeral private key is discarded
+        after derivation (forward secrecy)."""
+        ephemeral = ec.generate_private_key(ec.SECP256R1())
+        my_pub_bytes = ephemeral.public_key().public_bytes(
+            encoding=serialization.Encoding.X962,
+            format=serialization.PublicFormat.UncompressedPoint)
+        session_key = self._derive_ecdh_session(
+            peer_node_id, ephemeral, bytes.fromhex(peer_pub_hex))
+        self.session_keys[peer_node_id] = session_key
+        return my_pub_bytes.hex()
+
+    async def initiate_ecdh(self, peer_node_id: str, exchange_fn) -> SessionKey:
+        """Sender side of the ECDH handshake. ``exchange_fn(my_pub_hex)`` delivers
+        our ephemeral public key to the peer and returns the peer's ephemeral
+        public key (as hex). Works over any transport (real WS capability, or an
+        in-process call)."""
+        ephemeral = ec.generate_private_key(ec.SECP256R1())
+        my_pub_bytes = ephemeral.public_key().public_bytes(
+            encoding=serialization.Encoding.X962,
+            format=serialization.PublicFormat.UncompressedPoint)
+        peer_pub_hex = await exchange_fn(my_pub_bytes.hex())
+        session_key = self._derive_ecdh_session(
+            peer_node_id, ephemeral, bytes.fromhex(peer_pub_hex))
+        self.session_keys[peer_node_id] = session_key
+        return session_key
+
+    async def negotiate_session_key(self, peer_node_id: str, client_jwt: str,
+                                    exchange_fn=None) -> SessionKey:
+        """Negotiate an ephemeral session key with another node.
+
+        With ``crypto.perfect_forward_secrecy`` enabled, performs a real ECDH
+        handshake (per-session ephemeral keys, discarded after use) so a later
+        compromise of long-term secrets can't decrypt past sessions. ``exchange_fn``
+        carries our ephemeral public key to the peer and returns theirs; the
+        caller supplies it (over the WS transport, or in-process for the demo).
+
+        Without forward secrecy (default), derives a per-node-pair key from the
+        shared deployment secret via HKDF — unrecoverable without that secret,
+        but not forward-secret.
+        """
         existing_key = self.session_keys.get(peer_node_id)
         if existing_key and existing_key.expires_at > time.time():
             return existing_key
-        
-        # Derive a per-node-pair key from the shared deployment secret via HKDF.
-        # Previously this hashed only public/guessable material (node ids, a JWT
-        # prefix, a coarse time bucket) with NO secret, so anyone could recompute
-        # the key. HKDF over the deployment secret makes it unrecoverable without
-        # that secret. (Full forward-secret ECDH is the P4 asymmetric redesign;
-        # this keeps the current shared-secret model but closes the disclosure.)
+
+        if self._pfs_enabled() and exchange_fn is not None:
+            self.logger.debug(f"ECDH forward-secret negotiation with {peer_node_id}")
+            return await self.initiate_ecdh(peer_node_id, exchange_fn)
+
+        # Shared-secret HKDF fallback.
         node_a = min(self.node_id, peer_node_id)
         node_b = max(self.node_id, peer_node_id)
         secret = (getattr(self.config, "secret_key", "") or "").encode()
@@ -302,16 +419,10 @@ class FederatedAuthManager:
         ).derive(secret)
 
         session_key = SessionKey(
-            key=session_secret,  # 256-bit key for AES
-            node_a=node_a,
-            node_b=node_b,
-            created_at=time.time(),
-            expires_at=time.time() + 900  # 15 minutes
+            key=session_secret, node_a=node_a, node_b=node_b,
+            created_at=time.time(), expires_at=time.time() + 900,
         )
-        
-        # Store the session key
         self.session_keys[peer_node_id] = session_key
-        
         self.logger.debug(f"Negotiated session key with {peer_node_id}")
         return session_key
     
@@ -407,6 +518,12 @@ class FederatedSCPNode:
             # worker thread (handlers are dispatched off the event loop).
             return asyncio.run(self.handle_forwarded_request(encrypted_request, from_node))
 
+        def _key_exchange(peer_node, peer_pub_hex):
+            # ECDH handshake (forward secrecy): derive+store a session key with the
+            # peer and return our ephemeral public key.
+            my_pub_hex = self.auth_manager.perform_ecdh_exchange(peer_node, peer_pub_hex)
+            return {"peer_pub_hex": my_pub_hex}
+
         server = DistributedTaskServer(config or self.config, dispatch=None)
         server.register(
             "federated_forward",
@@ -414,24 +531,63 @@ class FederatedSCPNode:
             _dispatch,
             description="Receive a forwarded, token-authenticated request from a peer",
         )
+        server.register(
+            "federated_key_exchange",
+            {"peer_node": {"type": "string"}, "peer_pub_hex": {"type": "string"}},
+            _key_exchange,
+            description="ECDH ephemeral key exchange for forward-secret sessions",
+        )
         return server
 
-    def add_peer(self, node_id: str, endpoint: str):
-        """Add a peer node to the federation"""
+    def add_peer(self, node_id: str, endpoint: str, proof_public_key_path: str = None):
+        """Add a peer node to the federation.
+
+        Pass ``proof_public_key_path`` to register the peer's forwarding-proof
+        public key so this node can verify proofs the peer signs with its own
+        private key (asymmetric mode). Without it, verification uses the shared
+        secret."""
         self.peers[node_id] = endpoint
         self.auth_manager.trust_forwarder(node_id)
+        if proof_public_key_path:
+            self.auth_manager.register_peer_public_key(node_id, proof_public_key_path)
         self.logger.info(f"Added federated peer: {node_id} at {endpoint}")
     
     async def forward_request(self, task: Dict[str, Any], target_node: str, client_jwt: str) -> Dict[str, Any]:
         """Forward a client request to another node with token forwarding auth"""
-        
+
         # Create and sign forwarding proof (bound to the target node)
         proof = self.auth_manager.create_forwarding_proof(client_jwt, task, target_node)
         signed_proof = self.auth_manager.sign_forwarding_proof(proof)
-        
-        # Negotiate session key with target node
-        session_key = await self.auth_manager.negotiate_session_key(target_node, client_jwt)
-        
+
+        # Decide transport up front so the ECDH key exchange (if forward secrecy
+        # is enabled) uses the same channel as the request.
+        use_real = self.peer_pool is not None and target_node in self.peers
+        host = port = None
+        if use_real:
+            from urllib.parse import urlparse
+            parsed = urlparse(self.peers[target_node])
+            host = parsed.hostname or "localhost"
+            port = parsed.port
+
+        # Exchange function for forward-secret ECDH: carries our ephemeral public
+        # key to the peer and returns theirs. No-op unless PFS is enabled.
+        if use_real:
+            async def exchange_fn(my_pub_hex):
+                res = await self.peer_pool.call(
+                    target_node, host, port, "federated_key_exchange",
+                    peer_node=self.node_id, peer_pub_hex=my_pub_hex)
+                return res["peer_pub_hex"]
+        else:
+            async def exchange_fn(my_pub_hex):
+                mock = DEMO_FEDERATION_NODES.get(target_node)
+                if not mock:
+                    raise ValueError(f"Target node {target_node} not found")
+                return mock.auth_manager.perform_ecdh_exchange(self.node_id, my_pub_hex)
+
+        # Negotiate session key with target node (ECDH when PFS is enabled).
+        session_key = await self.auth_manager.negotiate_session_key(
+            target_node, client_jwt, exchange_fn=exchange_fn)
+
         # Create request payload
         request_payload = {
             'task': task,
@@ -443,19 +599,15 @@ class FederatedSCPNode:
                 'timestamp': time.time()
             }
         }
-        
+
         # Encrypt the request
         encrypted_request = self.auth_manager.encrypt_with_session_key(request_payload, session_key)
-        
+
         self.logger.info(f"Forwarding request to {target_node} with client token auth")
 
         # Real transport when enabled and the peer endpoint is known; otherwise
         # fall back to the in-process DEMO_FEDERATION_NODES simulation.
-        if self.peer_pool is not None and target_node in self.peers:
-            from urllib.parse import urlparse
-            parsed = urlparse(self.peers[target_node])
-            host = parsed.hostname or "localhost"
-            port = parsed.port
+        if use_real:
             return await self.peer_pool.call(
                 target_node, host, port,
                 "federated_forward",

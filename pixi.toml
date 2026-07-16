@@ -19,6 +19,7 @@ psutil = "*"
 tomli = "*"
 tomli-w = "*"
 click = ">=8.0.0,<9"
+dnspython = ">=2.4.0,<3"   # DNS-SRV node discovery
 
 [tasks]
 # --- Tests ---

@@ -202,3 +202,176 @@ def test_rs256_verifier_cannot_mint(tmp_path):
 def test_mint_requires_a_key():
     with pytest.raises(ValueError):
         mint_client_jwt("bob", ["task:*"])
+
+
+# --------------------------------------------------------------------------- #
+# Per-node asymmetric forwarding proofs
+# --------------------------------------------------------------------------- #
+from smcp_federated_auth import ForwardingProof  # noqa: E402
+
+
+def _proof_keypair(tmp_path, name):
+    from tools.generate_jwt_keys import generate_rsa_keypair
+    priv, pub = generate_rsa_keypair(2048)
+    d = tmp_path / name
+    d.mkdir()
+    (d / "priv.pem").write_bytes(priv)
+    (d / "pub.pem").write_bytes(pub)
+    return d / "priv.pem", d / "pub.pem"
+
+
+def _proof_config(priv_path=None):
+    cfg = _config()
+    if priv_path:
+        cfg.security.proof_signing_key_path = str(priv_path)
+    return cfg
+
+
+def _proof(signer, target="nodeB"):
+    return ForwardingProof(client_jwt="x", forwarded_by=signer, forwarded_at=0.0,
+                           task_hash="h", forwarded_to=target)
+
+
+def test_asymmetric_proof_verifies_with_registered_key(tmp_path):
+    a_priv, a_pub = _proof_keypair(tmp_path, "A")
+    A = FederatedAuthManager(_proof_config(a_priv), "nodeA")
+    B = FederatedAuthManager(_proof_config(), "nodeB")
+    B.register_peer_public_key("nodeA", str(a_pub))
+    signed = A.sign_forwarding_proof(_proof("nodeA"))
+    assert signed["sig_alg"] == "PS256"
+    ok, _ = B.verify_forwarding_proof(signed)
+    assert ok
+
+
+def test_asymmetric_proof_forgery_rejected(tmp_path):
+    # Attacker signs with a DIFFERENT key but claims forwarded_by=nodeA.
+    a_priv, a_pub = _proof_keypair(tmp_path, "A")
+    c_priv, _c_pub = _proof_keypair(tmp_path, "C")
+    B = FederatedAuthManager(_proof_config(), "nodeB")
+    B.register_peer_public_key("nodeA", str(a_pub))
+    attacker = FederatedAuthManager(_proof_config(c_priv), "attacker")
+    forged = attacker.sign_forwarding_proof(_proof("nodeA"))  # claims to be nodeA
+    ok, _ = B.verify_forwarding_proof(forged)
+    assert not ok
+
+
+def test_asymmetric_proof_unknown_signer_rejected(tmp_path):
+    a_priv, _a_pub = _proof_keypair(tmp_path, "A")
+    A = FederatedAuthManager(_proof_config(a_priv), "nodeA")
+    B = FederatedAuthManager(_proof_config(), "nodeB")  # no key registered for anyone
+    signed = A.sign_forwarding_proof(_proof("nodeA"))
+    ok, _ = B.verify_forwarding_proof(signed)
+    assert not ok
+
+
+def test_hmac_fallback_when_no_proof_keys():
+    # Without proof keys, proofs use the shared-secret HMAC and still verify.
+    A = FederatedAuthManager(_proof_config(), "nodeA")
+    B = FederatedAuthManager(_proof_config(), "nodeB")  # same jwt_secret via _config()
+    signed = A.sign_forwarding_proof(_proof("nodeA", target=""))
+    assert signed["sig_alg"] == "HS256"
+    ok, _ = B.verify_forwarding_proof(signed)
+    assert ok
+
+
+# --------------------------------------------------------------------------- #
+# Forward-secret ECDH session keys
+# --------------------------------------------------------------------------- #
+import asyncio  # noqa: E402
+
+
+def _pfs_config():
+    cfg = _config()
+    cfg.crypto.perfect_forward_secrecy = True
+    return cfg
+
+
+def test_ecdh_exchange_derives_matching_keys():
+    A = FederatedAuthManager(_pfs_config(), "nodeA")
+    B = FederatedAuthManager(_pfs_config(), "nodeB")
+
+    async def ex(my_pub_hex):
+        return B.perform_ecdh_exchange("nodeA", my_pub_hex)
+
+    ka = asyncio.run(A.negotiate_session_key("nodeB", "jwt", exchange_fn=ex))
+    kb = B.session_keys["nodeA"]
+    assert ka.key == kb.key and len(ka.key) == 32
+
+
+def test_ecdh_forward_secrecy_new_key_per_session():
+    A = FederatedAuthManager(_pfs_config(), "nodeA")
+    B = FederatedAuthManager(_pfs_config(), "nodeB")
+
+    async def ex(my_pub_hex):
+        return B.perform_ecdh_exchange("nodeA", my_pub_hex)
+
+    k1 = asyncio.run(A.negotiate_session_key("nodeB", "jwt", exchange_fn=ex))
+    A.session_keys.clear(); B.session_keys.clear()
+    k2 = asyncio.run(A.negotiate_session_key("nodeB", "jwt", exchange_fn=ex))
+    assert k1.key != k2.key  # ephemeral keys discarded => fresh key each session
+
+
+def test_ecdh_encrypt_decrypt_roundtrip():
+    A = FederatedAuthManager(_pfs_config(), "nodeA")
+    B = FederatedAuthManager(_pfs_config(), "nodeB")
+
+    async def ex(my_pub_hex):
+        return B.perform_ecdh_exchange("nodeA", my_pub_hex)
+
+    ka = asyncio.run(A.negotiate_session_key("nodeB", "jwt", exchange_fn=ex))
+    enc = A.encrypt_with_session_key({"msg": "secret"}, ka)
+    assert B.decrypt_with_session_key(enc, "nodeA") == {"msg": "secret"}
+
+
+def test_no_pfs_uses_shared_secret_hkdf():
+    # With PFS off, both sides derive the same key from the shared secret (no
+    # exchange needed) — preserves the previous behaviour.
+    A = FederatedAuthManager(_config(), "nodeA")
+    B = FederatedAuthManager(_config(), "nodeB")
+    ka = asyncio.run(A.negotiate_session_key("nodeB", "jwt"))
+    kb = asyncio.run(B.negotiate_session_key("nodeA", "jwt"))
+    assert ka.key == kb.key
+
+
+# --------------------------------------------------------------------------- #
+# End-to-end: real WS transport + forward-secret ECDH + per-node asymmetric proof
+# --------------------------------------------------------------------------- #
+def test_federated_forward_pfs_asymmetric_over_real_socket(tmp_path):
+    from smcp_federated_auth import FederatedSCPNode
+    import secrets as _secrets
+
+    api = "cfg_" + _secrets.token_urlsafe(24)
+    shared = dict(api_key=api, jwt_secret=SECRET,
+                  secret_key=_secrets.token_urlsafe(32),
+                  kdf_salt=_secrets.token_urlsafe(16))
+    a_priv, a_pub = _proof_keypair(tmp_path, "nodeA")
+    b_priv, b_pub = _proof_keypair(tmp_path, "nodeB")
+
+    def cfg(proof_key):
+        c = SMCPConfig(node_id="n", **shared)
+        c.security.allow_insecure_transit = True
+        c.security.proof_signing_key_path = str(proof_key)
+        c.crypto.perfect_forward_secrecy = True
+        return c
+
+    async def main():
+        A = FederatedSCPNode(cfg(a_priv), "nodeA")
+        B = FederatedSCPNode(cfg(b_priv), "nodeB")
+        serverB = B.make_forward_server(cfg(b_priv))
+        await serverB.start(host="localhost", port=8841)
+        A.enable_real_transport(cfg(a_priv))
+        A.add_peer("nodeB", "ws://localhost:8841", proof_public_key_path=str(b_pub))
+        B.add_peer("nodeA", "ws://localhost:8842", proof_public_key_path=str(a_pub))
+        tok = create_test_jwt("alice@corp", ["task:*"], ["node*"], secret=SECRET)
+        try:
+            r = await A.forward_request({"task_id": "t", "type": "ai_reasoning"}, "nodeB", tok)
+            assert r["status"] == "success", r
+            assert r["processed_by"] == "nodeB"
+            # A real ECDH session key was established on both ends.
+            assert "nodeB" in A.auth_manager.session_keys
+            assert "nodeA" in B.auth_manager.session_keys
+        finally:
+            await serverB.stop()
+            await A.peer_pool.close_all()
+
+    asyncio.run(main())

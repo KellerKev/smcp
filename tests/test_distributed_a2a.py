@@ -101,11 +101,21 @@ def test_registry_health_check_real(monkeypatch):
     asyncio.run(main())
 
 
-def test_unimplemented_discovery_raises():
+def test_unknown_discovery_method_raises():
+    async def main():
+        reg = DistributedNodeRegistry(ClusterConfig(simulate_distributed=False,
+                                                    discovery_method="bogus"))
+        with pytest.raises(ValueError):
+            await reg.discover_nodes()
+    asyncio.run(main())
+
+
+def test_consul_discovery_without_config_raises():
+    # Consul is implemented now, but requires consul_url + service_name.
     async def main():
         reg = DistributedNodeRegistry(ClusterConfig(simulate_distributed=False,
                                                     discovery_method="consul"))
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(ValueError):
             await reg.discover_nodes()
     asyncio.run(main())
 
