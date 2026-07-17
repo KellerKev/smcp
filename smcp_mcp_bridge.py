@@ -400,12 +400,59 @@ class MCPConnectionPool:
 class MCPBridge:
     """Main bridge class for MCP server integration"""
     
-    def __init__(self):
+    # Bridged capabilities are namespaced under this prefix so a foreign MCP
+    # server can never register a name that collides with (shadows) a native
+    # SMCP tool: mcp:<server_id>:<capability>.
+    BRIDGE_NS = "mcp"
+
+    def __init__(self, node: Any = None):
         self.servers: Dict[str, MCPServerConfig] = {}
         self.connection_pools: Dict[str, MCPConnectionPool] = {}
         self.protocol_adapter = MCPProtocolAdapter()
         self.capability_mapper = MCPCapabilityMapper()
         self.capability_index: Dict[str, List[str]] = {}  # capability -> [server_ids]
+        # Owning SMCPNode. When attached, each bridged capability is registered as
+        # a native node capability so bridged invocations flow through the SAME
+        # gate as native tools (per-tool authz, param validation, consent hook,
+        # output filter, audit) — no separate enforcement path.
+        self.node = node
+
+    def attach_node(self, node: Any) -> None:
+        """Attach the owning SMCPNode so bridged tools inherit its security
+        pipeline. Call before register_server (or re-register)."""
+        self.node = node
+
+    def _bridged_name(self, server_id: str, capability: str) -> str:
+        return f"{self.BRIDGE_NS}:{server_id}:{capability}"
+
+    def _register_bridged_capabilities(self, config: MCPServerConfig,
+                                       smcp_capabilities: List[str]) -> None:
+        """Expose each bridged capability as a native, namespaced node capability
+        whose handler routes to this specific MCP server through execute_task."""
+        if self.node is None:
+            return
+        from smcp_core import Capability
+        for cap in smcp_capabilities:
+            bridged_name = self._bridged_name(config.server_id, cap)
+            if bridged_name in getattr(self.node, "capabilities", {}):
+                continue  # already registered (idempotent re-register)
+
+            def make_handler(server_id: str, capability: str):
+                def handler(task: Dict[str, Any] = None):
+                    # Runs in the node's worker-thread dispatch; drive the async
+                    # bridge call to completion here.
+                    return asyncio.run(
+                        self._execute_on_server(server_id, task or {}, capability))
+                return handler
+
+            self.node.register_capability(
+                Capability(
+                    name=bridged_name,
+                    description=f"Bridged MCP capability '{cap}' on {config.name}",
+                    parameters={"task": {"type": "object"}},
+                ),
+                make_handler(config.server_id, cap),
+            )
         
     async def register_server(self, config: MCPServerConfig) -> bool:
         """Register an MCP server. Only commit the server into the routing
@@ -444,6 +491,10 @@ class MCPBridge:
                         f"first-registered provider."
                     )
                 self.capability_index[capability].append(config.server_id)
+
+            # Expose bridged capabilities as native node capabilities so their
+            # invocations inherit the SMCP security pipeline (Workstream A).
+            self._register_bridged_capabilities(config, smcp_capabilities)
 
             logger.info(f"Registered MCP server: {config.name} with capabilities: {smcp_capabilities}")
             return True
@@ -489,36 +540,50 @@ class MCPBridge:
             return []
     
     async def execute_task(self, task: Dict[str, Any], capability: Optional[str] = None) -> Dict[str, Any]:
-        """Execute a task on an appropriate MCP server"""
-        
-        # Find server with required capability
+        """Execute a task on an appropriate MCP server (capability-routed)."""
         server_id = self._select_server(capability, task)
-        
         if not server_id:
             return {
                 "status": "error",
                 "error": f"No MCP server available for capability: {capability}"
             }
-        
-        server_config = self.servers[server_id]
-        
-        # Translate request
+        return await self._execute_on_server(server_id, task, capability)
+
+    async def _execute_on_server(self, server_id: str, task: Dict[str, Any],
+                                 capability: Optional[str] = None) -> Dict[str, Any]:
+        """Send a task to a specific MCP server, with audit provenance.
+
+        Note: the SMCP↔foreign-MCP hop is secured by TLS + bearer only — per-message
+        SMCP crypto cannot apply to a non-SMCP server. Authorization/consent/output
+        filtering happen on SMCP's own side via the native pipeline (Workstream A).
+        """
+        server_config = self.servers.get(server_id)
+        if server_config is None:
+            return {"status": "error", "error": f"Unknown MCP server: {server_id}"}
+
+        self._audit({"event": "bridge_invoke", "server_id": server_id,
+                     "capability": capability, "bridged": True, "status": "start"})
+
         mcp_request = self.protocol_adapter.translate_request(
-            {"action": "execute_task", "task": task},
-            server_config
-        )
-        
-        # Send request with retry logic
+            {"action": "execute_task", "task": task}, server_config)
         response = await self._send_request_with_retry(server_id, mcp_request)
-        
+
         if not response:
-            return {
-                "status": "error",
-                "error": f"Failed to execute task on {server_config.name}"
-            }
-        
-        # Translate response
-        return self.protocol_adapter.translate_response(response, server_config)
+            self._audit({"event": "bridge_invoke", "server_id": server_id,
+                         "capability": capability, "bridged": True, "status": "error"})
+            return {"status": "error",
+                    "error": f"Failed to execute task on {server_config.name}"}
+
+        result = self.protocol_adapter.translate_response(response, server_config)
+        self._audit({"event": "bridge_invoke", "server_id": server_id,
+                     "capability": capability, "bridged": True, "status": "success"})
+        return result
+
+    def _audit(self, event: Dict[str, Any]) -> None:
+        """Emit a bridged-call audit event via the owning node, if attached."""
+        node = getattr(self, "node", None)
+        if node is not None and hasattr(node, "_emit_audit"):
+            node._emit_audit(event)
     
     def _select_server(self, capability: Optional[str], task: Dict[str, Any]) -> Optional[str]:
         """Select appropriate server for task"""

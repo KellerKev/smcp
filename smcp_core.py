@@ -448,32 +448,48 @@ class SMCPNode:
         })
     
     def _handle_tool_invoke(self, message: SMCPMessage) -> SMCPMessage:
-        """Handle tool invocation with per-tool authorization + parameter validation."""
+        """Handle a TOOL_INVOKE message: authorize, validate, gate, dispatch."""
         tool_name = message.payload.get("tool_name")
         parameters = message.payload.get("parameters", {})
+        token = message.payload.get("token")
+        ok, outcome = self.authorize_and_invoke(tool_name, parameters, token)
+        if not ok:
+            return self.create_error_response(message.id, outcome)
+        return self.create_message(MessageType.TOOL_RESPONSE, {
+            "tool_name": tool_name,
+            "result": outcome,
+            "status": "success",
+        })
 
+    def authorize_and_invoke(self, tool_name: str, parameters: Dict[str, Any],
+                             token: Optional[str]):
+        """Run the full guarded tool-invocation pipeline and return (ok, value).
+
+        On success: (True, result). On any rejection: (False, error_message).
+        This is the single enforcement point shared by the native SMCP transport
+        (_handle_tool_invoke) and the inbound MCP ingress, so MCP-originated calls
+        are gated identically: per-tool authorization, parameter validation, the
+        consent gate, dispatch, output filtering, and audit.
+        """
+        parameters = parameters or {}
         if tool_name not in self.tool_handlers:
-            return self.create_error_response(message.id, f"Tool '{tool_name}' not found")
+            return False, f"Tool '{tool_name}' not found"
 
         capability = self.capabilities.get(tool_name)
-        # Per-tool authorization: a token must carry either the tool-specific
-        # scope `tool:<name>` or the broad `tool_invoke` scope. Tools that opt out
-        # (auth_required=False) may be called without a token.
+        # Per-tool authorization: `tool:<name>` or the broad `tool_invoke` scope.
         if capability is None or capability.auth_required:
-            token = message.payload.get("token")
             if not (self._is_authorized(token, f"tool:{tool_name}")
                     or self._is_authorized(token, "tool_invoke")):
                 self._emit_audit({"event": "authz_denied", "tool": tool_name,
                                   "client_id": self._client_id_for(token)})
-                return self.create_error_response(message.id, "Unauthorized")
+                return False, "Unauthorized"
 
-        # Validate parameters against the declared capability schema before dispatch.
         if capability is not None:
             error = self._validate_parameters(parameters, capability.parameters)
             if error:
-                return self.create_error_response(message.id, f"Invalid parameters: {error}")
+                return False, f"Invalid parameters: {error}"
 
-        client_id = self._client_id_for(message.payload.get("token"))
+        client_id = self._client_id_for(token)
 
         # Consent / policy gate (human-in-the-loop). Denials are audited.
         if self.consent_hook is not None:
@@ -484,29 +500,22 @@ class SMCPNode:
             if not allowed:
                 self._emit_audit({"event": "invoke_denied", "tool": tool_name,
                                   "client_id": client_id})
-                return self.create_error_response(message.id, "Tool invocation denied by policy")
+                return False, "Tool invocation denied by policy"
 
         try:
             result = self.tool_handlers[tool_name](**parameters)
-            # Optional output filtering (redaction / tainting) before returning.
             if self.output_filter is not None:
                 result = self.output_filter(tool_name, result)
             self._emit_audit({"event": "invoke", "tool": tool_name,
                               "client_id": client_id, "status": "success"})
-            return self.create_message(MessageType.TOOL_RESPONSE, {
-                "tool_name": tool_name,
-                "result": result,
-                "status": "success"
-            })
+            return True, result
         except TypeError as e:
-            # Argument-shape mismatch is a client error; keep it specific.
-            return self.create_error_response(message.id, f"Invalid parameters: {str(e)}")
+            return False, f"Invalid parameters: {str(e)}"
         except Exception:
-            # Do not leak internal exception detail to the caller.
             self._log_internal_error(tool_name)
             self._emit_audit({"event": "invoke", "tool": tool_name,
                               "client_id": client_id, "status": "error"})
-            return self.create_error_response(message.id, "Tool execution failed")
+            return False, "Tool execution failed"
 
     def _emit_audit(self, event: Dict[str, Any]) -> None:
         """Emit a structured audit event to the configured hook (best-effort)."""

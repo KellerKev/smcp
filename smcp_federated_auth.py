@@ -235,7 +235,10 @@ class FederatedAuthManager:
 
     @staticmethod
     def _proof_message(proof_data: Dict[str, Any]) -> bytes:
-        return json.dumps(proof_data, sort_keys=True).encode()
+        # Canonical form: sorted keys + compact separators (matches the v3 message
+        # signature style and serde_json's compact output), so proofs are
+        # signable/verifiable byte-identically across languages (Python ⇄ Rust).
+        return json.dumps(proof_data, sort_keys=True, separators=(",", ":")).encode()
 
     def sign_forwarding_proof(self, proof: ForwardingProof) -> Dict[str, Any]:
         """Sign the forwarding proof to prevent tampering.
@@ -260,7 +263,7 @@ class FederatedAuthManager:
             signature = self.proof_private_key.sign(
                 message,
                 padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
-                            salt_length=padding.PSS.MAX_LENGTH),
+                            salt_length=hashes.SHA256.digest_size),  # 32; standard PS256 (RFC 7518), cross-language interoperable
                 hashes.SHA256(),
             ).hex()
             return {'proof': proof_data, 'signature': signature, 'sig_alg': 'PS256'}

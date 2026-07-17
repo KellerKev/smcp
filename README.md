@@ -43,7 +43,7 @@ with an audit trail (see [Security modes](#-security-modes) below).
 > **Status:** SMCP's *core* — auth (API-key / JWT / RS256), per-message encryption,
 > replay protection, per-tool authorization, TLS enforcement, fail-closed config, the connectors,
 > and external-IdP OAuth2 — is security-hardened and covered by an automated test suite (`pixi run
-> test`, 164 tests). The DuckDB connector fails closed at the engine level (host filesystem/network
+> test`, 185 tests). The DuckDB connector fails closed at the engine level (host filesystem/network
 > access is off unless opted in, and raw SQL is screened for file/network/extension access); the
 > filesystem connector enforces its extension allowlist symmetrically on read/delete/list; and
 > `SMCPConfig.load()` preserves every setting (TLS, JWT algorithm, and the full OAuth2/crypto/cluster
@@ -59,9 +59,14 @@ with an audit trail (see [Security modes](#-security-modes) below).
 > interoperable clients.
 >
 > SMCP is a standalone secure agent protocol (its own client, server, and A2A spec), not JSON-RPC/MCP
-> on the wire; it interoperates with MCP through the bridge. LLM-layer threats (prompt injection, tool
-> poisoning) are the operator's responsibility via the safety hooks — SMCP secures the transport,
-> identity, and authorization, and provides the hooks, but ships no built-in prompt-injection defense.
+> on the wire; it interoperates with MCP **bidirectionally** through the bridge (outbound bridged MCP
+> tools now inherit the full SMCP security pipeline — per-tool authz, consent, output-filter, audit,
+> anti-shadowing namespacing) and the inbound ingress ([`smcp_mcp_ingress.py`](smcp_mcp_ingress.py))
+> which lets standard MCP clients call SMCP tools under the same gate. LLM-layer threats (prompt
+> injection, tool poisoning) are handled via pluggable safety hooks; a ready-made
+> [malgra guardrail plugin](docs/MALGRA_INTEGRATION.md) wires those hooks to the
+> [malgra](https://github.com/KellerKev/malgra) policy engine (span-provenance injection detection,
+> tool-poisoning defense), and malgra is a byte-for-byte-interoperable Rust SMCP peer.
 
 See the [Roadmap](ROADMAP.md) for what's deferred and current limitations.
 
@@ -408,7 +413,7 @@ This project is licensed under the MIT License.
 
 ## 🚦 Status
 
-- ✅ **Core SMCP**: security-hardened and test-covered (137 tests)
+- ✅ **Core SMCP**: security-hardened and test-covered (185 tests)
 - ✅ **Basic/Encrypted modes**: security-hardened, test-covered
 - ✅ **A2A / distributed system**: real multi-node networking over the authenticated SMCP
   WebSocket RPC (handshake → auth → tool-invoke), with a 2-node socket test. Pluggable node
@@ -424,6 +429,17 @@ This project is licensed under the MIT License.
   proofs (RSA-PSS; no shared secret can forge), and optional forward-secret ECDH session keys
   (`crypto.perfect_forward_secrecy`), test-covered. HS256 shared-secret remains available for a
   single trust domain
+- ✅ **MCP interop (bidirectional)**: outbound bridged MCP tools inherit the SMCP security pipeline
+  (per-tool authz, consent, output-filter, audit, anti-shadowing namespacing); inbound
+  [`smcp_mcp_ingress.py`](smcp_mcp_ingress.py) lets standard MCP clients call SMCP tools under the
+  same gate, test-covered
+- ✅ **Malgra guardrail plugin**: [`smcp_malgra_guard.py`](smcp_malgra_guard.py) wires the
+  consent/output-filter hooks to malgra's policy engine for prompt-injection / tool-poisoning defense
+  (with a local injection-regex fast path + fail-open/closed), test-covered. See
+  [docs/MALGRA_INTEGRATION.md](docs/MALGRA_INTEGRATION.md)
+- ✅ **Cross-language interop**: the federation crypto (canonical proofs, HMAC/PS256 proofs, RS256
+  tokens, ECDH, AES-GCM-AAD) is verified byte-for-byte against the Rust
+  [malgra](https://github.com/KellerKev/malgra) implementation via shared conformance vectors
 
 ---
 
