@@ -440,6 +440,12 @@ This project is licensed under the MIT License.
 - ✅ **Cross-language interop**: the federation crypto (canonical proofs, HMAC/PS256 proofs, RS256
   tokens, ECDH, AES-GCM-AAD) is verified byte-for-byte against the Rust
   [malgra](https://github.com/KellerKev/malgra) implementation via shared conformance vectors
+  (`tests/federation_conformance_vectors.json`). The same vectors are reproduced by the Python
+  ecosystem federation peers — [rixi](https://github.com/KellerKev/rixi) (full peer),
+  [zettelkasten-memory](https://github.com/KellerKev/zettelkasten-memory) (receiver),
+  [wolfgang](https://github.com/KellerKev/wolfgang) (sender) — and
+  [apkallu](https://github.com/KellerKev/apkallu-knowledge-agent) integrates this package's
+  federation layer directly (`smcp_federated_auth` is packaged for dependents to import)
 
 ---
 
