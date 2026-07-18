@@ -44,4 +44,8 @@ py-modules = [
     "smcp_a2a",
     "smcp_a2a_server",
     "smcp_connector_base",
+    # A2A federation layer (forwarding proofs, forward-secret ECDH, RS256
+    # client tokens) — packaged so dependents can integrate it as a federation
+    # peer instead of re-porting the crypto.
+    "smcp_federated_auth",
 ]
