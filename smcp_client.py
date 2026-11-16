@@ -157,6 +157,12 @@ class SMCPClient:
         
         if response["type"] == "error":
             raise Exception(f"Tool invocation failed: {decrypted.get('error')}")
+        if response["type"] != "tool_response":
+            raise Exception(f"Tool invocation failed: unexpected {response['type']!r} reply")
+        if decrypted.get("tool_name") not in (None, tool_name):
+            # the answer to another tool's call, however validly signed, is not this one's
+            raise Exception(f"Tool invocation failed: the reply is for tool "
+                            f"{decrypted.get('tool_name')!r}, not {tool_name!r}")
         
         return decrypted.get("result")
     
@@ -166,8 +172,23 @@ class SMCPClient:
         await self.websocket.send(json.dumps(message.to_dict()))
         response_data = await self.websocket.recv()
         response = json.loads(response_data)
-        if not self.node.security.verify_signature(SMCPMessage.from_dict(response)):
+        reply = SMCPMessage.from_dict(response)
+        if not self.node.security.verify_signature(reply):
             raise Exception("server message signature invalid (mutual auth failed)")
+        # A valid signature says the server made this reply at some point — not that it is the
+        # reply to this request. It has to be fresh and new (the same check the server makes
+        # of requests), and when it names the request it answers, that has to be this one.
+        if not self.node._check_and_record_replay(reply):
+            raise Exception("server reply is stale or was already received (replay rejected)")
+        payload = response.get("payload") or {}
+        if response.get("encrypted") and "encrypted_data" in payload:
+            try:
+                payload = self.node.security.decrypt_payload(payload["encrypted_data"])
+            except Exception:
+                payload = {}
+        answered = payload.get("request_id") if isinstance(payload, dict) else None
+        if answered not in (None, "", message.id):
+            raise Exception("server reply answers another request")
         return response
     
     def list_capabilities(self) -> Dict[str, Any]:

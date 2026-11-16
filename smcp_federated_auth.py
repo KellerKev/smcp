@@ -35,6 +35,17 @@ FEDERATION_ISSUER = "smcp-federation"
 FEDERATION_AUDIENCE = "smcp-federation"
 
 
+MAX_PROOF_LIFETIME = 900.0      # seconds from now a forwarding proof may still be valid (default 300)
+
+
+def task_hashes(task) -> set:
+    """The hashes a proof may carry for `task`: SHA-256 over its JSON with sorted keys, in the
+    spaced form Python writes and the compact form other implementations write."""
+    return {hashlib.sha256(json.dumps(task, sort_keys=True).encode()).hexdigest(),
+            hashlib.sha256(json.dumps(task, sort_keys=True,
+                                      separators=(",", ":")).encode()).hexdigest()}
+
+
 @dataclass
 class ForwardingProof:
     """Proof that a server is forwarding a client's request"""
@@ -104,7 +115,7 @@ class FederatedAuthManager:
         
         # Session key management
         self.session_keys: Dict[str, SessionKey] = {}  # peer_node_id -> SessionKey
-        self.forwarding_nonces: Dict[str, float] = {}  # nonce -> timestamp (for replay prevention)
+        self.forwarding_nonces: Dict[str, float] = {}  # nonce -> when its proof expires (replay prevention)
         # Replay-cache concurrency + growth bounds (handlers run in a thread pool).
         self._nonce_lock = threading.Lock()
         self._max_nonces = 100_000
@@ -340,9 +351,13 @@ class FederatedAuthManager:
                 )
                 return False, None
 
-            # Check expiration
+            # Check expiration — and that it is not further off than a proof has reason to
+            # be: the signer picks it, and the nonce has to be remembered until then.
             if proof_data['expires_at'] < time.time():
                 self.logger.warning("Forwarding proof expired")
+                return False, None
+            if proof_data['expires_at'] - time.time() > MAX_PROOF_LIFETIME:
+                self.logger.warning("Forwarding proof expires too far in the future")
                 return False, None
             
             # Replay check + record, done atomically under a lock. Handlers run in
@@ -355,15 +370,16 @@ class FederatedAuthManager:
                 if nonce in self.forwarding_nonces:
                     self.logger.warning("Forwarding proof nonce already used (replay attack?)")
                     return False, None
-                # Prune expired nonces, then bound total size (evict oldest) so a
-                # flood of unique nonces can't grow the cache without limit.
-                expired = [n for n, t in self.forwarding_nonces.items() if current_time - t > 600]
+                # A nonce is remembered until its proof has expired — never dropped while
+                # the proof could still be presented again. The cache is bounded by
+                # refusing new proofs when it is full of live ones, not by forgetting.
+                expired = [n for n, until in self.forwarding_nonces.items() if until < current_time]
                 for n in expired:
                     del self.forwarding_nonces[n]
                 if len(self.forwarding_nonces) >= self._max_nonces:
-                    for n in sorted(self.forwarding_nonces, key=self.forwarding_nonces.get)[:len(self.forwarding_nonces) - self._max_nonces + 1]:
-                        del self.forwarding_nonces[n]
-                self.forwarding_nonces[nonce] = current_time
+                    self.logger.warning("Too many forwarding proofs in flight")
+                    return False, None
+                self.forwarding_nonces[nonce] = float(proof_data['expires_at'])
             
             # Create ForwardingProof object
             proof = ForwardingProof(
@@ -733,6 +749,11 @@ class FederatedSCPNode:
             # Extract task and process it
             task = request_payload['task']
             forwarding_metadata = request_payload['forwarding_metadata']
+
+            # The proof is for one task: the one whose hash it carries. Without this, a proof
+            # signed for a harmless task would carry any other.
+            if proof.task_hash not in task_hashes(task):
+                raise ValueError("Forwarding proof is not for this task (task_hash mismatch)")
             
             self.logger.info(f"Processing forwarded request for client: {forwarding_metadata['original_client']}")
             

@@ -382,7 +382,8 @@ class SMCPNode:
             "protocol_version": PROTOCOL_VERSION,
             "capabilities_count": len(self.capabilities),
             "encryption_enabled": True,
-            "client_nonce": (message.payload or {}).get("nonce", "")
+            "client_nonce": (message.payload or {}).get("nonce", ""),
+            "request_id": message.id,
         })
     
     def _handle_auth(self, message: SMCPMessage) -> SMCPMessage:
@@ -410,7 +411,8 @@ class SMCPNode:
         return self.create_message(MessageType.AUTH, {
             "status": "success",
             "token": token,
-            "expires_in": 3600
+            "expires_in": 3600,
+            "request_id": message.id,
         })
     
     def _grant_permissions(self, client_id: str) -> List[str]:
@@ -444,7 +446,8 @@ class SMCPNode:
         }
         
         return self.create_message(MessageType.CAPABILITY_DISCOVERY, {
-            "capabilities": capabilities_data
+            "capabilities": capabilities_data,
+            "request_id": message.id,
         })
     
     def _handle_tool_invoke(self, message: SMCPMessage) -> SMCPMessage:
@@ -455,10 +458,13 @@ class SMCPNode:
         ok, outcome = self.authorize_and_invoke(tool_name, parameters, token)
         if not ok:
             return self.create_error_response(message.id, outcome)
+        # Every answer names the request it answers (inside the signed payload), so a client
+        # can tell it from the answer to some other request.
         return self.create_message(MessageType.TOOL_RESPONSE, {
             "tool_name": tool_name,
             "result": outcome,
             "status": "success",
+            "request_id": message.id,
         })
 
     def authorize_and_invoke(self, tool_name: str, parameters: Dict[str, Any],

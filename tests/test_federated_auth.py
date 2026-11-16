@@ -518,3 +518,69 @@ def test_federated_forward_pfs_asymmetric_over_real_socket(tmp_path):
             await A.peer_pool.close_all()
 
     asyncio.run(main())
+
+
+# --------------------------------------------------------------------------- #
+# A proof is for one task, once, for a short while
+# --------------------------------------------------------------------------- #
+def _forwarded(receiver_node, sender_mgr, task, proof_task=None, **proof_over):
+    """What `sender_mgr` puts on the wire for `task`, with a proof signed for `proof_task`."""
+    sk = asyncio.run(sender_mgr.negotiate_session_key(receiver_node.node_id, "jwt"))
+    receiver_node.auth_manager.session_keys[sender_mgr.node_id] = sk
+    proof = sender_mgr.create_forwarding_proof(
+        _jwt(), task if proof_task is None else proof_task, receiver_node.node_id)
+    for name, value in proof_over.items():
+        setattr(proof, name, value)
+    payload = {"task": task, "auth_proof": sender_mgr.sign_forwarding_proof(proof),
+               "forwarding_metadata": {"original_client": "alice@corp", "forwarding_path": [],
+                                       "task_id": "t"}}
+    return sender_mgr.encrypt_with_session_key(payload, sk)
+
+
+def _pair():
+    from smcp_federated_auth import FederatedSCPNode
+    node = FederatedSCPNode(_config(), "nodeB")
+    sender = FederatedAuthManager(_config(), "nodeA")
+    node.auth_manager.trust_forwarder("nodeA")
+    return node, sender
+
+
+def test_a_proof_carries_only_the_task_it_was_signed_for():
+    node, sender = _pair()
+    harmless, harmful = {"type": "ai_reasoning", "prompt": "hi"}, {"type": "data_analysis", "drop": "all"}
+    r = asyncio.run(node.handle_forwarded_request(
+        _forwarded(node, sender, harmful, proof_task=harmless), "nodeA"))
+    assert r["status"] == "error" and "task_hash" in r["error"]
+    # the task the proof was signed for goes through the same checks and past them
+    r = asyncio.run(node.handle_forwarded_request(_forwarded(node, sender, harmless), "nodeA"))
+    assert "task_hash" not in str(r.get("error", ""))
+    # a sender that hashes compact JSON (no spaces) means the same task
+    import hashlib
+    import json
+    compact = hashlib.sha256(json.dumps(harmless, sort_keys=True,
+                                        separators=(",", ":")).encode()).hexdigest()
+    r = asyncio.run(node.handle_forwarded_request(
+        _forwarded(node, sender, harmless, task_hash=compact), "nodeA"))
+    assert "task_hash" not in str(r.get("error", ""))
+
+
+def test_a_proof_cannot_be_made_to_last_and_its_nonce_is_kept_until_it_expires():
+    m = _mgr("node_a")
+    receiver = FederatedAuthManager(_config(), "node_b")
+    long_lived = m.create_forwarding_proof(_jwt(), {"type": "ai_reasoning"}, "node_b")
+    long_lived.expires_at = time.time() + 10 * 365 * 86400
+    ok, _ = receiver.verify_forwarding_proof(m.sign_forwarding_proof(long_lived))
+    assert not ok
+    # a proof still valid is not forgotten to make room, however old its first use
+    proof = m.create_forwarding_proof(_jwt(), {"type": "ai_reasoning"}, "node_b")
+    signed = m.sign_forwarding_proof(proof)
+    assert receiver.verify_forwarding_proof(signed)[0]
+    receiver._max_nonces = 1
+    assert receiver.forwarding_nonces[proof.nonce] == proof.expires_at
+    other = m.sign_forwarding_proof(m.create_forwarding_proof(_jwt(), {"type": "x"}, "node_b"))
+    assert not receiver.verify_forwarding_proof(other)[0]         # full of live proofs: refused
+    assert not receiver.verify_forwarding_proof(signed)[0]        # and the first is still known
+    # once it has expired its nonce goes, and there is room again
+    receiver.forwarding_nonces[proof.nonce] = time.time() - 1
+    fresh = m.sign_forwarding_proof(m.create_forwarding_proof(_jwt(), {"type": "y"}, "node_b"))
+    assert receiver.verify_forwarding_proof(fresh)[0]
