@@ -64,9 +64,9 @@ with an audit trail (see [Security modes](#-security-modes) below).
 > anti-shadowing namespacing) and the inbound ingress ([`smcp_mcp_ingress.py`](smcp_mcp_ingress.py))
 > which lets standard MCP clients call SMCP tools under the same gate. LLM-layer threats (prompt
 > injection, tool poisoning) are handled via pluggable safety hooks; a ready-made
-> [malgra guardrail plugin](docs/MALGRA_INTEGRATION.md) wires those hooks to the
-> [malgra](https://github.com/KellerKev/malgra) policy engine (span-provenance injection detection,
-> tool-poisoning defense), and malgra is a byte-for-byte-interoperable Rust SMCP peer.
+> [Malgra guardrail plugin](docs/MALGRA_INTEGRATION.md) wires those hooks to the
+> [Malgra](https://github.com/KellerKev/malgra) policy engine (span-provenance injection detection,
+> tool-poisoning defense), and Malgra is a byte-for-byte-interoperable Rust SMCP peer.
 
 See the [Roadmap](ROADMAP.md) for what's deferred and current limitations.
 
@@ -434,16 +434,16 @@ This project is licensed under the MIT License.
   [`smcp_mcp_ingress.py`](smcp_mcp_ingress.py) lets standard MCP clients call SMCP tools under the
   same gate, test-covered
 - ✅ **Malgra guardrail plugin**: [`smcp_malgra_guard.py`](smcp_malgra_guard.py) wires the
-  consent/output-filter hooks to malgra's policy engine for prompt-injection / tool-poisoning defense
+  consent/output-filter hooks to Malgra's policy engine for prompt-injection / tool-poisoning defense
   (with a local injection-regex fast path + fail-open/closed), test-covered. See
   [docs/MALGRA_INTEGRATION.md](docs/MALGRA_INTEGRATION.md)
 - ✅ **Cross-language interop**: the federation crypto (canonical proofs, HMAC/PS256 proofs, RS256
   tokens, ECDH, AES-GCM-AAD) is verified byte-for-byte against the Rust
-  [malgra](https://github.com/KellerKev/malgra) implementation via shared conformance vectors
+  [Malgra](https://github.com/KellerKev/malgra) implementation via shared conformance vectors
   (`tests/federation_conformance_vectors.json`). The same vectors are reproduced by the Python
   ecosystem federation peers — [rixi](https://github.com/KellerKev/rixi) (full peer),
   [zettelkasten-memory](https://github.com/KellerKev/zettelkasten-memory) (receiver),
-  [wolfgang](https://github.com/KellerKev/wolfgang) (sender) — and
+  [Wolfgang](https://github.com/KellerKev/wolfgang) (sender) — and
   [apkallu](https://github.com/KellerKev/apkallu-knowledge-agent) integrates this package's
   federation layer directly (`smcp_federated_auth` is packaged for dependents to import)
 
